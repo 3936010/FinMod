@@ -20,7 +20,7 @@ class MarketAgent:
         self.ticker = ticker
         self.news_analyzer = NewsAnalyzer(ticker)
         self.stock_predictor = StockPredictor(ticker, use_fundamentals=True)
-        self.model_name = "qwen3:8b" # Options: llama3.2, llama3.1, mistral, qwen2.5
+        self.model_name = "gemma3:27b"
         self.model_provider = "Ollama"
         self.max_retries = 3
 
@@ -59,10 +59,15 @@ class MarketAgent:
             
         print("\n--- Generating Final Opinion ---")
         template = p.market_agent_template
+        
+        # Extract fundamental features (should be populated after data_processing)
+        fundamental_analysis = self.stock_predictor.fundamental_features if hasattr(self.stock_predictor, 'fundamental_features') else {}
+        
         prompt = template.invoke({
             "ticker": self.ticker,
             "ml_analysis": json.dumps(ml_analysis, indent=2),
-            "news_analysis": json.dumps(news_analysis, indent=2)
+            "news_analysis": json.dumps(news_analysis, indent=2),
+            "fundamental_analysis": json.dumps(fundamental_analysis, indent=2)
         })
         
         final_prediction = call_llm(
