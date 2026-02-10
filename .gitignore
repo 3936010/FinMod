@@ -218,3 +218,7 @@ wheels/
 
 .env
 
+
+# Local Database
+local_data.db
+*.db

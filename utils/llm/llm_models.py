@@ -1,6 +1,7 @@
 import os
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from enum import Enum
 from pydantic import BaseModel
 from typing import Tuple
@@ -9,7 +10,9 @@ from typing import Tuple
 class ModelProvider(str, Enum):
     """Enum for supported LLM providers"""
     OPENAI = "OpenAI"
+    # OLLAMA = "Ollama"  # Commented out as requested
     OLLAMA = "Ollama"
+    GEMINI = "Gemini"
 
 
 
@@ -48,15 +51,22 @@ AVAILABLE_MODELS = [
     ),
 
     # Ollama Models
+    # LLMModel(
+    #     display_name="[ollama] gpt-oss:20b",
+    #     model_name="gpt-oss:20b",
+    #     provider=ModelProvider.OLLAMA
+    # ),
+    # LLMModel(
+    #     display_name="[ollama] qwen3:8b",
+    #     model_name="qwen3:8b",
+    #     provider=ModelProvider.OLLAMA
+    # ),
+
+    # Gemini Models
     LLMModel(
-        display_name="[ollama] gpt-oss:20b",
-        model_name="gpt-oss:20b",
-        provider=ModelProvider.OLLAMA
-    ),
-    LLMModel(
-        display_name="[ollama] qwen3:8b",
-        model_name="qwen3:8b",
-        provider=ModelProvider.OLLAMA
+        display_name="[google] gemini-2.5-flash",
+        model_name="gemini-2.5-flash",
+        provider=ModelProvider.GEMINI
     ),
 ]
 
@@ -84,5 +94,11 @@ def get_model(model_name: str, model_provider: ModelProvider | str) -> ChatOpenA
     elif model_provider == ModelProvider.OLLAMA:
         # Ollama runs locally, no API key needed
         return ChatOllama(model=model_name)
+    elif model_provider == ModelProvider.GEMINI:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
+            raise ValueError("Google API key not found. Please make sure GOOGLE_API_KEY is set in your .env file.")
+        return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
     else:
         raise ValueError(f"Unsupported model provider: {model_provider}")

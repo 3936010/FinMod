@@ -32,11 +32,13 @@ class NewsAnalyzer:
     def __init__(self, ticker):
         self.ticker = ticker
         self.pl = polygon()
-        self.model_name = "qwen3:8b"
-        self.model_provider = "Ollama"
+        # self.model_name = "qwen3:8b"
+        # self.model_provider = "Ollama"
+        self.model_name = "gemini-1.5-flash"
+        self.model_provider = "Gemini"
         self.max_retries = 3
 
-    def analyze_news(self, start_date='2026-01-05', end_date='2026-01-14'):
+    def analyze_news(self, start_date='2026-02-01', end_date='2026-02-05'):
         nvdia_news, nvdia_news_df = self.pl.get_news(self.ticker, start_date, end_date, limit=1000, strict=False)
         
         if nvdia_news_df is None or nvdia_news_df.empty:

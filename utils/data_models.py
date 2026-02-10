@@ -2,7 +2,7 @@
 ## Original author: Virat Singh https://github.com/virattt
 ## Modified by Zexi Chen https://github.com/Chen-zexi
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Price(BaseModel):
@@ -149,33 +149,58 @@ class RetailActivityResponse(BaseModel):
 
 
 class ShortTermSentiment(BaseModel):
-    short_term_sentiment: str
-    short_term_confidence: float
-    short_term_reasoning: str
+    short_term_sentiment: str = Field(alias="short_term_sentiment")
+    short_term_confidence: float = Field(alias="short_term_confidence")
+    short_term_reasoning: str = Field(alias="short_term_reasoning")
+    
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore" 
+    }
     
 class LongTermSentiment(BaseModel):
-    long_term_sentiment: str
-    long_term_confidence: float
-    long_term_reasoning: str
+    long_term_sentiment: str = Field(alias="long_term_sentiment")
+    long_term_confidence: float = Field(alias="long_term_confidence")
+    long_term_reasoning: str = Field(alias="long_term_reasoning")
+    
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore" 
+    }
     
 class KeyEventOutlook(BaseModel):
-    event: str
-    event_date: str
-    event_type: str
-    event_impact: str
-    event_reasoning: str
+    event: str = Field(alias="event")
+    event_date: str = Field(alias="event_date")
+    event_type: str = Field(alias="event_type")
+    event_impact: str = Field(alias="event_impact")
+    event_reasoning: str = Field(alias="event_reasoning")
+    
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore" 
+    }
     
 class NewsSentiment(BaseModel):
-    short_term_sentiment: ShortTermSentiment
-    long_term_sentiment: LongTermSentiment
-    key_events_outlook: list[KeyEventOutlook]
+    short_term_sentiment: ShortTermSentiment = Field(alias="short_term_sentiment")
+    long_term_sentiment: LongTermSentiment = Field(alias="long_term_sentiment")
+    key_events_outlook: list[KeyEventOutlook] = Field(alias="key_events_outlook")
+
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore" 
+    }
     
 class NewsSentimentByDate(BaseModel):
-    summary: str
-    sentiment: str
-    reasoning: str
-    date: str
-    stock_price_movement: str
+    summary: str = Field(alias="Summary")
+    sentiment: str = Field(alias="Sentiment")
+    reasoning: str = Field(alias="Reasoning")
+    date: str = Field(alias="Date")
+    stock_price_movement: str = Field(alias="Stock Price Movement")
+    
+    model_config = {
+        "populate_by_name": True,
+        "extra": "ignore" 
+    }
 
 class Position(BaseModel):
     cash: float = 0.0

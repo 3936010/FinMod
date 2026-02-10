@@ -40,7 +40,11 @@ class polygon:
         else:
             print("POLYGON_API_KEY is set")
         self.client = RESTClient(api_key=self.api_key)
-        self.db_ops = DataOperations() # Instantiate DataOperations
+        try:
+            self.db_ops = DataOperations() # Instantiate DataOperations
+        except Exception as e:
+            print(f"Warning: Database operations unavailable. {e}")
+            self.db_ops = None
     
     def get_data(self, ticker, multiplier=1, timespan='day', from_date='2025-03-13', to_date='2025-03-17', limit=10000) -> pd.DataFrame:
         """
@@ -306,7 +310,8 @@ class polygon:
                         news_df[col] = news_df[col].apply(json.dumps)
                 
                 # Insert data into the database
-                self.db_ops.insert_company_news(news_df, ticker=ticker)
+                if self.db_ops:
+                    self.db_ops.insert_company_news(news_df, ticker=ticker)
 
         except Exception as e:
             print(f"Error processing or inserting news data: {e}")

@@ -16,13 +16,12 @@ from xgboost import XGBClassifier
 import warnings
 warnings.filterwarnings('ignore')
 
-# Import financial feature extractor
-from utils.financial_features import FinancialFeatureExtractor
-
 
 class StockPredictor:
     def __init__(self, ticker, use_fundamentals=True):
         self.ticker = ticker
+        # use_fundamentals flag is kept for backward compatibility but fundamentals 
+        # are now only used as real-time LLM filters, not for training
         self.use_fundamentals = use_fundamentals
         self.model_RF = None
         self.model_XGB = None
@@ -32,7 +31,7 @@ class StockPredictor:
         self.y_train = None
         self.y_test = None
         self.data = None
-        self.fundamental_features = {}  # Cache for fundamental features
+        self.market_proxy_features = {}  # Latest market proxy values for display
         
         # Technical features
         self.technical_features = [
@@ -54,14 +53,16 @@ class StockPredictor:
             'Return_Lag1', 'Return_Lag2', 'Return_Lag3'
         ]
         
-        # Fundamental features (from financial statements)
-        self.fundamental_feature_names = FinancialFeatureExtractor.get_feature_names()
+        # Market proxy features (replaces fundamental features to prevent data leakage)
+        self.market_proxy_feature_names = [
+            'Beta_90d',           # 90-day rolling correlation with SPY
+            'Alpha_90d',          # Excess return relative to Beta-adjusted SPY
+            'VolAdj_Return',      # Return divided by 20-day ATR/StdDev
+            'PriceVolume_Ratio'   # Close / 20-day average volume
+        ]
         
-        # Combined features list
-        if use_fundamentals:
-            self.features = self.technical_features + self.fundamental_feature_names
-        else:
-            self.features = self.technical_features
+        # Training uses ONLY technical + market proxy features (NO fundamentals)
+        self.features = self.technical_features + self.market_proxy_feature_names
 
     def _calculate_features(self, data):
         """Calculate all technical indicators and features."""
@@ -134,8 +135,75 @@ class StockPredictor:
         
         return data
 
+    def _add_market_proxy_features(self, data):
+        """
+        Calculate market proxy features to replace fundamentals.
+        These are rolling metrics that can be calculated from price/volume data only.
+        
+        Features:
+        - Beta_90d: 90-day rolling correlation with SPY (market sensitivity)
+        - Alpha_90d: Excess return relative to Beta-adjusted SPY return
+        - VolAdj_Return: Current return divided by 20-day volatility (risk-adjusted momentum)
+        - PriceVolume_Ratio: Close price divided by 20-day average volume (liquidity proxy)
+        """
+        print("Calculating market proxy features...")
+        
+        # Fetch SPY data for Beta/Alpha calculation
+        try:
+            spy = yf.Ticker("SPY")
+            spy_data = spy.history(period="max")
+            spy_data['SPY_Return'] = spy_data['Close'].pct_change()
+            
+            # Align SPY data with ticker data by date
+            data['SPY_Return'] = spy_data['SPY_Return'].reindex(data.index)
+            
+            # Beta: 90-day rolling covariance / variance with SPY
+            rolling_cov = data['Return'].rolling(window=90).cov(data['SPY_Return'])
+            rolling_var = data['SPY_Return'].rolling(window=90).var()
+            data['Beta_90d'] = rolling_cov / rolling_var
+            
+            # Alpha: Excess return = Stock Return - (Beta * SPY Return)
+            # Use 90-day rolling mean of excess returns
+            excess_return = data['Return'] - (data['Beta_90d'] * data['SPY_Return'])
+            data['Alpha_90d'] = excess_return.rolling(window=90).mean() * 252  # Annualized
+            
+            # Clean up temporary column
+            del data['SPY_Return']
+            
+        except Exception as e:
+            print(f"Warning: Could not calculate Beta/Alpha: {e}")
+            data['Beta_90d'] = 1.0  # Default to market beta
+            data['Alpha_90d'] = 0.0  # Default to no alpha
+        
+        # VolAdj_Return: Return / 20-day rolling volatility (Sharpe-like ratio)
+        rolling_vol = data['Return'].rolling(window=20).std()
+        data['VolAdj_Return'] = data['Return'] / rolling_vol
+        
+        # PriceVolume_Ratio: Close / 20-day average volume (normalized)
+        avg_volume = data['Volume'].rolling(window=20).mean()
+        data['PriceVolume_Ratio'] = data['Close'] / avg_volume
+        # Scale to reasonable range (values can be very small)
+        data['PriceVolume_Ratio'] = data['PriceVolume_Ratio'] * 1e6
+        
+        # Store latest values for display
+        self.market_proxy_features = {
+            'Beta_90d': float(data['Beta_90d'].iloc[-1]) if not pd.isna(data['Beta_90d'].iloc[-1]) else 1.0,
+            'Alpha_90d': float(data['Alpha_90d'].iloc[-1]) if not pd.isna(data['Alpha_90d'].iloc[-1]) else 0.0,
+            'VolAdj_Return': float(data['VolAdj_Return'].iloc[-1]) if not pd.isna(data['VolAdj_Return'].iloc[-1]) else 0.0,
+            'PriceVolume_Ratio': float(data['PriceVolume_Ratio'].iloc[-1]) if not pd.isna(data['PriceVolume_Ratio'].iloc[-1]) else 0.0
+        }
+        
+        print(f"Market Proxy Features: Beta={self.market_proxy_features['Beta_90d']:.2f}, Alpha={self.market_proxy_features['Alpha_90d']:.2%}")
+        
+        return data
+
     def data_processing(self, period="max", start_date="2015-01-01"):
-        """Process data with enhanced features including fundamentals."""
+        """
+        Process data with technical features and market proxies.
+        
+        Training Constraint: Uses ONLY technical_features + market_proxy_features.
+        Fundamentals are NOT used in training to prevent historical data leakage.
+        """
         ticker_obj = yf.Ticker(self.ticker)
         data = ticker_obj.history(period=period)
         
@@ -154,25 +222,17 @@ class StockPredictor:
         # Calculate technical features
         data = self._calculate_features(data)
         
-        # Add fundamental features if enabled
-        if self.use_fundamentals:
-            print("Fetching fundamental features...")
-            extractor = FinancialFeatureExtractor(self.ticker)
-            self.fundamental_features = extractor.get_all_features()
-            
-            # Add fundamental features as constant columns (they're current snapshot values)
-            # These values apply to all rows as they represent current company state
-            for feature_name, value in self.fundamental_features.items():
-                data[feature_name] = value
-            
-            print(f"Added {len(self.fundamental_features)} fundamental features")
+        # Add market proxy features (replaces fundamentals to prevent leakage)
+        data = self._add_market_proxy_features(data)
         
-        # Drop NaN values
-        data.dropna(inplace=True)
-        
-        # Replace infinities with NaN and then forward fill
+        # Clean Data Pipe: Handle holidays/gaps properly
+        # 1. Replace infinities with NaN
         data.replace([np.inf, -np.inf], np.nan, inplace=True)
-        data.fillna(method='ffill', inplace=True)
+        # 2. Forward fill to handle holiday/gap days
+        data = data.ffill()
+        # 3. Backward fill for any remaining NaN at the start
+        data = data.bfill()
+        # 4. Drop any remaining NaN rows
         data.dropna(inplace=True)
         
         X = data[self.features]
@@ -195,6 +255,7 @@ class StockPredictor:
         
         print(f"Training samples: {len(self.X_train)}, Test samples: {len(self.X_test)}")
         print(f"Features used: {len(self.features)}")
+
 
     def tune_and_train_models(self, tune=True):
         """Train models with optional hyperparameter tuning."""
@@ -314,7 +375,7 @@ class StockPredictor:
         return acc_rf, acc_xgb, acc_ensemble
 
     def predict_next_day(self):
-        """Predict next day movement."""
+        """Predict next day movement using technical + market proxy features."""
         ticker_obj = yf.Ticker(self.ticker)
         hist = ticker_obj.history(period="max")
         
@@ -325,14 +386,15 @@ class StockPredictor:
         
         # Calculate technical features
         hist = self._calculate_features(hist)
-        hist.dropna(inplace=True)
-        hist.replace([np.inf, -np.inf], np.nan, inplace=True)
-        hist.fillna(method='ffill', inplace=True)
         
-        # Add fundamental features if enabled
-        if self.use_fundamentals:
-            for feature_name, value in self.fundamental_features.items():
-                hist[feature_name] = value
+        # Add market proxy features (same as training)
+        hist = self._add_market_proxy_features(hist)
+        
+        # Clean data pipe
+        hist.replace([np.inf, -np.inf], np.nan, inplace=True)
+        hist = hist.ffill()
+        hist = hist.bfill()
+        hist.dropna(inplace=True)
         
         # Get latest data point
         X_latest = hist[self.features].iloc[-1:]
@@ -362,7 +424,9 @@ class StockPredictor:
             "XGB_Prediction": "UP" if pred_XGB == 1 else "DOWN",
             "XGB_Probability_Up": float(prob_XGB[1]),
             "Ensemble_Prediction": "UP" if ensemble_pred == 1 else "DOWN",
-            "Ensemble_Confidence": float(ensemble_conf)
+            "Ensemble_Confidence": float(ensemble_conf),
+            # Include market proxy features in output for dashboard display
+            "Market_Proxies": self.market_proxy_features
         }
 
 

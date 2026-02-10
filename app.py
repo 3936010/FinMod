@@ -6,6 +6,7 @@ import json
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+import yfinance as yf
 from scripts.ai_market_agent import MarketAgent
 from scripts.ml_market_movement import StockPredictor
 from scripts.news import NewsAnalyzer
@@ -55,18 +56,82 @@ st.markdown("""
 # --- Sidebar ---
 st.sidebar.title("⚙️ Configuration")
 ticker = st.sidebar.text_input("Ticker Symbol", value="AAPL").upper()
-total_cash = st.sidebar.slider("Portfolio Cash ($)", min_value=10000, max_value=1000000, value=100000, step=10000)
-model_options = ["gemma3:27b", "qwen3:8b", "llama3.2", "mistral"]
+total_cash = st.sidebar.slider("Portfolio Cash ($)", min_value=100, max_value=1000, value=500, step=50)
+# model_options = ["llama3.2:3b", "gpt-oss:20b", "gpt-oss:20b"]
+model_options = ["gemini-2.5-flash"]
 selected_model = st.sidebar.selectbox("LLM Model", model_options)
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📅 News Date Range")
+news_start_date = st.sidebar.date_input(
+    "Start Date",
+    value=pd.to_datetime("2026-02-01"),
+    help="Start date for news analysis"
+)
+news_end_date = st.sidebar.date_input(
+    "End Date",
+    value=pd.to_datetime("2026-02-05"),
+    help="End date for news analysis"
+)
+
+st.sidebar.markdown("---")
 run_analysis = st.sidebar.button("🚀 Run Analysis", type="primary", use_container_width=True)
+
+
+# --- Helper Functions ---
+def _fetch_current_fundamentals(ticker_symbol: str) -> dict:
+    """
+    Fetch current fundamental snapshot from yfinance.
+    This is a "Real-Time Filter" for the LLM, NOT a training feature.
+    """
+    FUNDAMENTAL_KEYS = ['marketCap', 'trailingPE', 'dividendYield', 'debtToEquity', 'operatingMargins']
+    fundamentals = {}
+    
+    try:
+        ticker_obj = yf.Ticker(ticker_symbol)
+        info = ticker_obj.info
+        
+        for key in FUNDAMENTAL_KEYS:
+            value = info.get(key)
+            fundamentals[key] = value if value is not None else "N/A"
+        
+        # Add human-readable assessments for LLM
+        if isinstance(fundamentals.get('trailingPE'), (int, float)):
+            pe = fundamentals['trailingPE']
+            if pe > 50:
+                fundamentals['PE_Assessment'] = "OVERVALUED (PE > 50)"
+            elif pe > 25:
+                fundamentals['PE_Assessment'] = "FAIRLY_VALUED (PE 25-50)"
+            else:
+                fundamentals['PE_Assessment'] = "UNDERVALUED (PE < 25)"
+        else:
+            fundamentals['PE_Assessment'] = "UNKNOWN"
+        
+        if isinstance(fundamentals.get('debtToEquity'), (int, float)):
+            de = fundamentals['debtToEquity']
+            if de > 1.5:
+                fundamentals['Debt_Assessment'] = "HIGH_RISK (D/E > 1.5)"
+            elif de > 1.0:
+                fundamentals['Debt_Assessment'] = "MODERATE_RISK (D/E 1.0-1.5)"
+            else:
+                fundamentals['Debt_Assessment'] = "LOW_RISK (D/E < 1.0)"
+        else:
+            fundamentals['Debt_Assessment'] = "UNKNOWN"
+            
+    except Exception as e:
+        fundamentals = {key: "N/A" for key in FUNDAMENTAL_KEYS}
+        fundamentals['PE_Assessment'] = "UNKNOWN"
+        fundamentals['Debt_Assessment'] = "UNKNOWN"
+    
+    return fundamentals
+
 
 # --- Cached Model Training ---
 @st.cache_resource
 def get_trained_predictor(ticker_symbol: str):
     """Cache the trained StockPredictor to avoid retraining on UI refresh."""
-    predictor = StockPredictor(ticker_symbol, use_fundamentals=True)
+    # use_fundamentals=False because fundamentals are now fetched separately as real-time filter
+    predictor = StockPredictor(ticker_symbol, use_fundamentals=False)
     predictor.data_processing()
     predictor.train_models()
     return predictor
@@ -83,7 +148,7 @@ if run_analysis:
             predictor = get_trained_predictor(ticker)
             ml_analysis = predictor.predict_next_day()
             
-            # Get current price and ATR from latest data
+            # Get current price and ATR from latest data (for Risk & Execution)
             current_price = predictor.data['Close'].iloc[-1]
             atr = predictor.data['ATR'].iloc[-1]
             
@@ -91,12 +156,21 @@ if run_analysis:
             st.info("📰 Analyzing news sentiment...")
             news_analyzer = NewsAnalyzer(ticker)
             news_analyzer.model_name = selected_model
-            sentiment_result, sentiment_by_date = news_analyzer.analyze_news()
+            # Convert date objects to string format (YYYY-MM-DD)
+            start_date_str = news_start_date.strftime('%Y-%m-%d')
+            end_date_str = news_end_date.strftime('%Y-%m-%d')
+            sentiment_result, sentiment_by_date = news_analyzer.analyze_news(
+                start_date=start_date_str,
+                end_date=end_date_str
+            )
             news_analysis = sentiment_result.model_dump() if sentiment_result else {"info": "No news found"}
             
-            # 3. LLM Final Decision
+            # 3. Fetch Current Fundamentals (Real-Time Filter for LLM)
+            st.info("🏢 Fetching current fundamentals...")
+            fundamental_analysis = _fetch_current_fundamentals(ticker)
+            
+            # 4. LLM Final Decision
             st.info("🤖 Generating final trading signal...")
-            fundamental_analysis = predictor.fundamental_features
             
             template = p.market_agent_template
             prompt = template.invoke({
@@ -109,7 +183,7 @@ if run_analysis:
             final_prediction = call_llm(
                 prompt,
                 selected_model,
-                "Ollama",
+                "Gemini", # Was "Ollama"
                 MarketPrediction,
                 max_retries=3
             )
@@ -140,22 +214,45 @@ if run_analysis:
             with met_col2:
                 st.metric("LLM Confidence", f"{final_prediction.confidence*100:.1f}%")
             
+            # === TECHNICAL LAB TAB ===
+            st.markdown("---")
+            st.subheader("📈 Technical Lab")
+            
+            # Market Proxy Metrics Row (Beta/Alpha)
+            market_proxies = ml_analysis.get('Market_Proxies', {})
+            proxy_col1, proxy_col2, proxy_col3, proxy_col4 = st.columns(4)
+            with proxy_col1:
+                beta = market_proxies.get('Beta_90d', 'N/A')
+                st.metric("90-Day Beta", f"{beta:.2f}" if isinstance(beta, (int, float)) else beta)
+            with proxy_col2:
+                alpha = market_proxies.get('Alpha_90d', 'N/A')
+                st.metric("90-Day Alpha", f"{alpha:.2%}" if isinstance(alpha, (int, float)) else alpha)
+            with proxy_col3:
+                vol_adj = market_proxies.get('VolAdj_Return', 'N/A')
+                st.metric("Vol-Adj Return", f"{vol_adj:.2f}" if isinstance(vol_adj, (int, float)) else vol_adj)
+            with proxy_col4:
+                pv_ratio = market_proxies.get('PriceVolume_Ratio', 'N/A')
+                st.metric("Price/Vol Ratio", f"{pv_ratio:.2f}" if isinstance(pv_ratio, (int, float)) else pv_ratio)
+            
             # Two-Column Analysis Pane
             st.markdown("---")
-            st.subheader("📈 Analysis Details")
+            st.subheader("📊 Analysis Details")
             
             col_ml, col_sent = st.columns(2)
             
             with col_ml:
-                st.markdown("### 🔢 Technical / ML Analysis")
-                st.json(ml_analysis)
+                st.markdown("### 🔢 ML Technical Analysis")
+                # Display ML analysis without market proxies (shown above)
+                ml_display = {k: v for k, v in ml_analysis.items() if k != 'Market_Proxies'}
+                st.json(ml_display)
                 
-                # Fundamental Features
-                st.markdown("### 🏢 Fundamental Context")
+                # Current Fundamentals (Real-Time Filter)
+                st.markdown("### 🏢 Current Fundamentals (LLM Filter)")
                 st.json(fundamental_analysis)
             
             with col_sent:
                 st.markdown("### 📰 Sentiment / News Analysis")
+                st.caption(f"📅 Date Range: {start_date_str} to {end_date_str}")
                 st.json(news_analysis)
                 
                 st.markdown("### 🎯 LLM Reasoning")
