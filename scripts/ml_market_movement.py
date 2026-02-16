@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import traceback
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, accuracy_score
@@ -14,6 +15,8 @@ from sklearn.ensemble import RandomForestClassifier
 import matplotlib.pyplot as plt
 from xgboost import XGBClassifier
 import warnings
+import json
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 
@@ -32,6 +35,7 @@ class StockPredictor:
         self.y_test = None
         self.data = None
         self.market_proxy_features = {}  # Latest market proxy values for display
+        self.model_weights = {'RF': 0.5, 'XGB': 0.5}  # Default weights for ensemble
         
         # Technical features
         self.technical_features = [
@@ -88,7 +92,7 @@ class StockPredictor:
         data['Loss'] = -data['Delta'].where(data['Delta'] < 0, 0)
         data['AvgGain'] = data['Gain'].rolling(window=14).mean()
         data['AvgLoss'] = data['Loss'].rolling(window=14).mean()
-        data['RS'] = data['AvgGain'] / data['AvgLoss']
+        data['RS'] = data['AvgGain'] / (data['AvgLoss'] + 1e-10)
         data['RSI'] = 100 - (100 / (1 + data['RS']))
         
         # Momentum
@@ -98,8 +102,9 @@ class StockPredictor:
         data['Gap'] = data['Open'] - data['Close'].shift(1)
         
         # Volume indicators
-        data['VolumeSpike'] = data['Volume'] / data['Volume'].rolling(20).mean()
-        data['Volume_MA_Ratio'] = data['Volume'] / data['Volume'].rolling(10).mean()
+        # Shift rolling mean to avoid using current volume in the denominator (leakage prevention)
+        data['VolumeSpike'] = data['Volume'] / (data['Volume'].rolling(20).mean().shift(1) + 1e-10)
+        data['Volume_MA_Ratio'] = data['Volume'] / (data['Volume'].rolling(10).mean().shift(1) + 1e-10)
         
         # MACD
         ema12 = data['Close'].ewm(span=12, adjust=False).mean()
@@ -172,6 +177,7 @@ class StockPredictor:
             
         except Exception as e:
             print(f"Warning: Could not calculate Beta/Alpha: {e}")
+            traceback.print_exc()
             data['Beta_90d'] = 1.0  # Default to market beta
             data['Alpha_90d'] = 0.0  # Default to no alpha
         
@@ -230,9 +236,7 @@ class StockPredictor:
         data.replace([np.inf, -np.inf], np.nan, inplace=True)
         # 2. Forward fill to handle holiday/gap days
         data = data.ffill()
-        # 3. Backward fill for any remaining NaN at the start
-        data = data.bfill()
-        # 4. Drop any remaining NaN rows
+        # 3. Drop any remaining NaN rows (avoid bfill to prevent look-ahead bias)
         data.dropna(inplace=True)
         
         X = data[self.features]
@@ -327,14 +331,23 @@ class StockPredictor:
                 max_depth=5,
                 subsample=0.8,
                 scale_pos_weight=scale_pos_weight,
-                random_state=42
+                random_state=42,
+                early_stopping_rounds=10,
+                eval_metric='logloss'
             )
             self.model_RF.fit(self.X_train_scaled, self.y_train)
-            self.model_XGB.fit(self.X_train_scaled, self.y_train)
+            self.model_XGB.fit(
+                self.X_train_scaled, 
+                self.y_train, 
+                eval_set=[(self.X_test_scaled, self.y_test)],
+                verbose=False
+            )
 
     def train_models(self):
         """Backward compatible training without tuning."""
         self.tune_and_train_models(tune=False)
+
+
 
     def evaluate_models(self, show_feature_importance=True):
         """Evaluate models with detailed metrics."""
@@ -348,8 +361,21 @@ class StockPredictor:
         print(f"Accuracy RF:  {acc_rf:.2f}")
         print(f"Accuracy XGB: {acc_xgb:.2f}")
         
-        # Ensemble prediction (majority vote)
-        ensemble_preds = np.round((preds_RF + preds_XGB) / 2).astype(int)
+        # Ensemble prediction (weighted probabilities)
+        # Update weights based on validation accuracy
+        total_acc = acc_rf + acc_xgb
+        if total_acc > 0:
+            self.model_weights['RF'] = acc_rf / total_acc
+            self.model_weights['XGB'] = acc_xgb / total_acc
+            
+        # Get probabilities for test set
+        probs_RF = self.model_RF.predict_proba(self.X_test_scaled)[:, 1]
+        probs_XGB = self.model_XGB.predict_proba(self.X_test_scaled)[:, 1]
+        
+        # Calculate weighted probabilities
+        ensemble_probs = probs_RF * self.model_weights['RF'] + probs_XGB * self.model_weights['XGB']
+        ensemble_preds = (ensemble_probs > 0.5).astype(int)
+        
         acc_ensemble = accuracy_score(self.y_test, ensemble_preds)
         print(f"Accuracy Ensemble: {acc_ensemble:.2f}")
         
@@ -358,7 +384,8 @@ class StockPredictor:
             'Actual': self.y_test.values,
             'RF_Pred': preds_RF,
             'XGB_Pred': preds_XGB,
-            'Ensemble': ensemble_preds
+            'Ensemble_Prob': ensemble_probs,
+            'Ensemble_Pred': ensemble_preds
         }, index=self.y_test.index)
         print(f"\nLast 10 predictions:")
         print(results_df.tail(10))
@@ -366,11 +393,18 @@ class StockPredictor:
         # Feature importance
         if show_feature_importance:
             print(f"\n=== Top 10 Features (Random Forest) ===")
-            importances = pd.Series(
+            importances_rf = pd.Series(
                 self.model_RF.feature_importances_,
                 index=self.features
             ).sort_values(ascending=False)
-            print(importances.head(10))
+            print(importances_rf.head(10))
+            
+            print(f"\n=== Top 10 Features (XGBoost) ===")
+            importances_xgb = pd.Series(
+                self.model_XGB.feature_importances_,
+                index=self.features
+            ).sort_values(ascending=False)
+            print(importances_xgb.head(10))
         
         return acc_rf, acc_xgb, acc_ensemble
 
@@ -393,7 +427,6 @@ class StockPredictor:
         # Clean data pipe
         hist.replace([np.inf, -np.inf], np.nan, inplace=True)
         hist = hist.ffill()
-        hist = hist.bfill()
         hist.dropna(inplace=True)
         
         # Get latest data point
@@ -412,8 +445,10 @@ class StockPredictor:
         print(f"RF Prediction:  {'UP' if pred_RF == 1 else 'DOWN'} (confidence: {max(prob_RF)*100:.1f}%)")
         print(f"XGB Prediction: {'UP' if pred_XGB == 1 else 'DOWN'} (confidence: {max(prob_XGB)*100:.1f}%)")
         
-        # Ensemble
-        avg_prob_up = (prob_RF[1] + prob_XGB[1]) / 2
+        # Ensemble with learned weights
+        w_rf = self.model_weights.get('RF', 0.5)
+        w_xgb = self.model_weights.get('XGB', 0.5)
+        avg_prob_up = (prob_RF[1] * w_rf + prob_XGB[1] * w_xgb)
         ensemble_pred = 1 if avg_prob_up > 0.5 else 0
         ensemble_conf = avg_prob_up if ensemble_pred == 1 else 1 - avg_prob_up
         print(f"Ensemble:       {'UP' if ensemble_pred == 1 else 'DOWN'} (confidence: {ensemble_conf*100:.1f}%)")
@@ -426,12 +461,68 @@ class StockPredictor:
             "Ensemble_Prediction": "UP" if ensemble_pred == 1 else "DOWN",
             "Ensemble_Confidence": float(ensemble_conf),
             # Include market proxy features in output for dashboard display
-            "Market_Proxies": self.market_proxy_features
+            "Market_Proxies": self.market_proxy_features,
+            "Model_Weights": self.model_weights,
+            "Date": datetime.now().strftime("%Y-%m-%d")
         }
+
+    def save_final_prediction(self, prediction_dict, save=True):
+        """Append the daily prediction to a tracking file."""
+        if not save:
+            return
+
+        results_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'results')
+        os.makedirs(results_dir, exist_ok=True)
+        tracking_file = os.path.join(results_dir, "daily_predictions.csv")
+        
+        # Flatten dictionary for CSV
+        row = {
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Ticker": self.ticker,
+            **prediction_dict
+        }
+        # Remove nested dictionary if present (Market_Proxies)
+        if "Market_Proxies" in row:
+            for k, v in row["Market_Proxies"].items():
+                row[f"Proxy_{k}"] = v
+            del row["Market_Proxies"]
+
+        if "Model_Weights" in row:
+            for k, v in row["Model_Weights"].items():
+                row[f"Weight_{k}"] = v
+            del row["Model_Weights"]
+            
+        df = pd.DataFrame([row])
+        
+        if not os.path.exists(tracking_file):
+            df.to_csv(tracking_file, index=False)
+        else:
+            df.to_csv(tracking_file, mode='a', header=False, index=False)
+        print(f"Daily prediction appended to {tracking_file}")
+
+        # Save to consolidated JSON file
+        json_file = os.path.join(results_dir, "market_predictions.json")
+        data = [{}]
+        
+        if os.path.exists(json_file):
+            try:
+                with open(json_file, 'r') as f:
+                    content = json.load(f)
+                    if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+                        data = content
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        
+        # Update the latest state for this ticker
+        data[0][self.ticker] = prediction_dict
+        
+        with open(json_file, 'w') as f:
+            json.dump(data, f, indent=4)
+        print(f"Latest prediction updated in {json_file}")
 
 
 if __name__ == "__main__":
-    ticker = "AMD"
+    ticker = "QCOM"
     
     print("=" * 60)
     print(f"Stock Prediction for {ticker} with Fundamental Analysis")
@@ -445,4 +536,5 @@ if __name__ == "__main__":
     predictor.tune_and_train_models(tune=False)
     
     predictor.evaluate_models()
-    predictor.predict_next_day()
+    prediction = predictor.predict_next_day()
+    predictor.save_final_prediction(prediction, save=False)

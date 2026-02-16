@@ -111,7 +111,12 @@ class MarketAgent:
         try:
             self.stock_predictor.data_processing()
             self.stock_predictor.train_models()
+            try:
+                self.stock_predictor.evaluate_models()
+            except Exception as e:
+                print(f"Model evaluation failed: {e}")
             ml_analysis = self.stock_predictor.predict_next_day()
+            self.stock_predictor.save_final_prediction(ml_analysis)
             pprint(ml_analysis)
         except Exception as e:
             print(f"ML Prediction failed: {e}")
