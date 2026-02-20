@@ -217,8 +217,14 @@ wheels/
 .venv
 
 .env
+*.csv
+*.json
 
 
 # Local Database
 local_data.db
 *.db
+
+# local models
+*.pth
+*.pt
