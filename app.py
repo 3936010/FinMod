@@ -9,14 +9,12 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 import yfinance as yf
 from scripts.ai_market_agent import MarketAgent
 from scripts.ml_market_movement import StockPredictor
+from scripts.dl_alpha_production import AlphaPredictor
 from scripts.news import NewsAnalyzer
 from utils.risk_manager import RiskManager
 from utils.llm.prompt import prompts as p
 from utils.llm.api_call import call_llm
 from utils.data_models import MarketPrediction
-import importlib
-import utils.llm.prompt
-importlib.reload(utils.llm.prompt)
 
 import plotly.graph_objects as go
 import pandas as pd
@@ -78,54 +76,6 @@ st.sidebar.markdown("---")
 run_analysis = st.sidebar.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
 
-# --- Helper Functions ---
-def _fetch_current_fundamentals(ticker_symbol: str) -> dict:
-    """
-    Fetch current fundamental snapshot from yfinance.
-    This is a "Real-Time Filter" for the LLM, NOT a training feature.
-    """
-    FUNDAMENTAL_KEYS = ['marketCap', 'trailingPE', 'dividendYield', 'debtToEquity', 'operatingMargins']
-    fundamentals = {}
-    
-    try:
-        ticker_obj = yf.Ticker(ticker_symbol)
-        info = ticker_obj.info
-        
-        for key in FUNDAMENTAL_KEYS:
-            value = info.get(key)
-            fundamentals[key] = value if value is not None else "N/A"
-        
-        # Add human-readable assessments for LLM
-        if isinstance(fundamentals.get('trailingPE'), (int, float)):
-            pe = fundamentals['trailingPE']
-            if pe > 50:
-                fundamentals['PE_Assessment'] = "OVERVALUED (PE > 50)"
-            elif pe > 25:
-                fundamentals['PE_Assessment'] = "FAIRLY_VALUED (PE 25-50)"
-            else:
-                fundamentals['PE_Assessment'] = "UNDERVALUED (PE < 25)"
-        else:
-            fundamentals['PE_Assessment'] = "UNKNOWN"
-        
-        if isinstance(fundamentals.get('debtToEquity'), (int, float)):
-            de = fundamentals['debtToEquity']
-            if de > 1.5:
-                fundamentals['Debt_Assessment'] = "HIGH_RISK (D/E > 1.5)"
-            elif de > 1.0:
-                fundamentals['Debt_Assessment'] = "MODERATE_RISK (D/E 1.0-1.5)"
-            else:
-                fundamentals['Debt_Assessment'] = "LOW_RISK (D/E < 1.0)"
-        else:
-            fundamentals['Debt_Assessment'] = "UNKNOWN"
-            
-    except Exception as e:
-        fundamentals = {key: "N/A" for key in FUNDAMENTAL_KEYS}
-        fundamentals['PE_Assessment'] = "UNKNOWN"
-        fundamentals['Debt_Assessment'] = "UNKNOWN"
-    
-    return fundamentals
-
-
 # --- Cached Model Training ---
 @st.cache_resource
 def get_trained_predictor(ticker_symbol: str):
@@ -135,6 +85,11 @@ def get_trained_predictor(ticker_symbol: str):
     predictor.data_processing()
     predictor.train_models()
     return predictor
+
+@st.cache_resource
+def get_trained_alpha_predictor(model_dir: str):
+    """Cache the DL Alpha Predictor to avoid reloading PyTorch models on UI refresh."""
+    return AlphaPredictor(model_dir)
 
 # --- Main Header ---
 st.title(f"📊 Trading Dashboard - {ticker}")
@@ -152,6 +107,16 @@ if run_analysis:
             current_price = predictor.data['Close'].iloc[-1]
             atr = predictor.data['ATR'].iloc[-1]
             
+            # 1.5 DL Alpha Prediction
+            st.info("🧠 Running DL Alpha prediction...")
+            try:
+                alpha_predictor = get_trained_alpha_predictor("/home/sd/FinMod/models/alpha_gru_v1")
+                alpha_analysis = alpha_predictor.predict_next_price(ticker)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                alpha_analysis = {"error": str(e)}
+            
             # 2. News Analysis
             st.info("📰 Analyzing news sentiment...")
             news_analyzer = NewsAnalyzer(ticker)
@@ -167,7 +132,7 @@ if run_analysis:
             
             # 3. Fetch Current Fundamentals (Real-Time Filter for LLM)
             st.info("🏢 Fetching current fundamentals...")
-            fundamental_analysis = _fetch_current_fundamentals(ticker)
+            fundamental_analysis = MarketAgent(ticker)._fetch_current_fundamentals()
             
             # 4. LLM Final Decision
             st.info("🤖 Generating final trading signal...")
@@ -176,6 +141,7 @@ if run_analysis:
             prompt = template.invoke({
                 "ticker": ticker,
                 "ml_analysis": json.dumps(ml_analysis, indent=2),
+                "alpha_analysis": json.dumps(alpha_analysis, indent=2),
                 "news_analysis": json.dumps(news_analysis, indent=2),
                 "fundamental_analysis": json.dumps(fundamental_analysis, indent=2)
             })
@@ -249,6 +215,10 @@ if run_analysis:
                 # Current Fundamentals (Real-Time Filter)
                 st.markdown("### 🏢 Current Fundamentals (LLM Filter)")
                 st.json(fundamental_analysis)
+
+                # DL Alpha Prediction
+                st.markdown("### 🧠 DL Alpha Analysis")
+                st.json(alpha_analysis)
             
             with col_sent:
                 st.markdown("### 📰 Sentiment / News Analysis")

@@ -1,137 +1,177 @@
-[
-    {
-        "AMD": {
-            "RF_Prediction": "UP",
-            "RF_Probability_Up": 0.5625742777881707,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5275934338569641,
-            "Ensemble_Prediction": "UP",
-            "Ensemble_Confidence": 0.5454482476849798,
-            "Market_Proxies": {
-                "Beta_90d": 2.9614259842570156,
-                "Alpha_90d": 0.11197670653618146,
-                "VolAdj_Return": 0.1249786000180562,
-                "PriceVolume_Ratio": 4.827305038638435
-            },
-            "Model_Weights": {
-                "RF": 0.5104166666666666,
-                "XGB": 0.4895833333333333
-            },
-            "Date": "2026-02-17"
+{
+    "QCOM": {
+        "RF_Prediction": "UP",
+        "RF_Probability_Up": 0.5857021452652382,
+        "XGB_Prediction": "UP",
+        "XGB_Probability_Up": 0.5045850276947021,
+        "LR_Prediction": "DOWN",
+        "LR_Probability_Up": 0.4807417659520714,
+        "GB_Prediction": "UP",
+        "GB_Probability_Up": 0.5753811497756453,
+        "Ensemble_Prediction": "UP",
+        "Ensemble_Confidence": 0.5369984513996581,
+        "Market_Proxies": {
+            "Beta_90d": 1.8886245205409644,
+            "Alpha_90d": -0.4020112130414179,
+            "VolAdj_Return": -0.6034546764033967,
+            "PriceVolume_Ratio": 12.375463895696484
         },
-        "AAPL": {
-            "RF_Prediction": "DOWN",
-            "RF_Probability_Up": 0.45789364997217297,
-            "XGB_Prediction": "DOWN",
-            "XGB_Probability_Up": 0.4985319674015045,
-            "Ensemble_Prediction": "DOWN",
-            "Ensemble_Confidence": 0.5200780945626566,
-            "Market_Proxies": {
-                "Beta_90d": 0.8816024109824371,
-                "Alpha_90d": -0.041798375337089244,
-                "VolAdj_Return": -1.1037894290950712,
-                "PriceVolume_Ratio": 4.278779762855378
-            },
-            "Model_Weights": {
-                "RF": 0.4579439252336449,
-                "XGB": 0.5420560747663552
-            },
-            "Date": "2026-02-17"
+        "Model_Weights": {
+            "RF": 0.2459016393442623,
+            "XGB": 0.26024590163934425,
+            "LR": 0.2377049180327869,
+            "GB": 0.2561475409836066
         },
-        "NVDA": {
-            "RF_Prediction": "DOWN",
-            "RF_Probability_Up": 0.46014427926773444,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5224934220314026,
-            "Ensemble_Prediction": "DOWN",
-            "Ensemble_Confidence": 0.5110339539382656,
-            "Market_Proxies": {
-                "Beta_90d": 1.9453352349660231,
-                "Alpha_90d": -0.08127026227063229,
-                "VolAdj_Return": -0.8060476583911421,
-                "PriceVolume_Ratio": 1.0428980320774224
-            },
-            "Model_Weights": {
-                "RF": 0.5377358490566037,
-                "XGB": 0.4622641509433962
-            },
-            "Date": "2026-02-17"
+        "Date": "2026-02-22"
+    },
+    "NVDA": {
+        "RF_Prediction": "UP",
+        "RF_Probability_Up": 0.5673038680685488,
+        "XGB_Prediction": "DOWN",
+        "XGB_Probability_Up": 0.496845543384552,
+        "LR_Prediction": "UP",
+        "LR_Probability_Up": 0.659053631950828,
+        "GB_Prediction": "UP",
+        "GB_Probability_Up": 0.6184241850832873,
+        "Ensemble_Prediction": "UP",
+        "Ensemble_Confidence": 0.5854632779501957,
+        "Market_Proxies": {
+            "Beta_90d": 1.9781740910632701,
+            "Alpha_90d": -0.13296819528988713,
+            "VolAdj_Return": -0.01705162551669387,
+            "PriceVolume_Ratio": 1.1224828263346929
         },
-        "QCOM": {
-            "RF_Prediction": "UP",
-            "RF_Probability_Up": 0.5750852859871793,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5093891024589539,
-            "Ensemble_Prediction": "UP",
-            "Ensemble_Confidence": 0.5449745376869362,
-            "Market_Proxies": {
-                "Beta_90d": 1.9968051380385134,
-                "Alpha_90d": -0.5194066149350377,
-                "VolAdj_Return": 0.6827088451712202,
-                "PriceVolume_Ratio": 12.097267964657593
-            },
-            "Model_Weights": {
-                "RF": 0.5416666666666667,
-                "XGB": 0.45833333333333337
-            },
-            "Date": "2026-02-17"
+        "Model_Weights": {
+            "RF": 0.26487523992322454,
+            "XGB": 0.24376199616122837,
+            "LR": 0.2514395393474088,
+            "GB": 0.2399232245681382
         },
-        "AMZN": {
-            "RF_Prediction": "UP",
-            "RF_Probability_Up": 0.6235403167921598,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5556281805038452,
-            "Ensemble_Prediction": "UP",
-            "Ensemble_Confidence": 0.5889184661802851,
-            "Market_Proxies": {
-                "Beta_90d": 1.4540987666939107,
-                "Alpha_90d": -0.3321622405392904,
-                "VolAdj_Return": -0.1969895255237709,
-                "PriceVolume_Ratio": 3.2813549126754626
-            },
-            "Model_Weights": {
-                "RF": 0.49019607843137253,
-                "XGB": 0.5098039215686274
-            },
-            "Date": "2026-02-17"
+        "Date": "2026-02-22"
+    },
+    "AAPL": {
+        "RF_Prediction": "DOWN",
+        "RF_Probability_Up": 0.495237555104708,
+        "XGB_Prediction": "UP",
+        "XGB_Probability_Up": 0.5021638870239258,
+        "LR_Prediction": "DOWN",
+        "LR_Probability_Up": 0.3800436152045723,
+        "GB_Prediction": "UP",
+        "GB_Probability_Up": 0.7922963713865391,
+        "Ensemble_Prediction": "UP",
+        "Ensemble_Confidence": 0.5429994570833548,
+        "Market_Proxies": {
+            "Beta_90d": 0.8377483806304226,
+            "Alpha_90d": 0.05990440827681123,
+            "VolAdj_Return": -0.7039815161448435,
+            "PriceVolume_Ratio": 4.686264765021623
         },
-        "TSCO": {
-            "RF_Prediction": "UP",
-            "RF_Probability_Up": 0.5525571159873006,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5037636160850525,
-            "Ensemble_Prediction": "UP",
-            "Ensemble_Confidence": 0.5279365426421295,
-            "Market_Proxies": {
-                "Beta_90d": 0.4336829686525754,
-                "Alpha_90d": 0.043502910686967225,
-                "VolAdj_Return": 0.43351397933962904,
-                "PriceVolume_Ratio": 6.565266575037297
-            },
-            "Model_Weights": {
-                "RF": 0.4954128440366972,
-                "XGB": 0.5045871559633027
-            },
-            "Date": "2026-02-17"
+        "Model_Weights": {
+            "RF": 0.2475442043222004,
+            "XGB": 0.26522593320235754,
+            "LR": 0.23968565815324164,
+            "GB": 0.2475442043222004
         },
-        "WMT": {
-            "RF_Prediction": "DOWN",
-            "RF_Probability_Up": 0.4181755635307788,
-            "XGB_Prediction": "UP",
-            "XGB_Probability_Up": 0.5015661120414734,
-            "Ensemble_Prediction": "DOWN",
-            "Ensemble_Confidence": 0.5427351112668977,
-            "Market_Proxies": {
-                "Beta_90d": -0.1661058413408098,
-                "Alpha_90d": 0.7908850521775166,
-                "VolAdj_Return": 0.10581996244348796,
-                "PriceVolume_Ratio": 2.927919566286707
-            },
-            "Model_Weights": {
-                "RF": 0.53125,
-                "XGB": 0.46875000000000006
-            },
-            "Date": "2026-02-17"
-        }
+        "Date": "2026-02-22"
+    },
+    "AMZN": {
+        "RF_Prediction": "DOWN",
+        "RF_Probability_Up": 0.49005235772913125,
+        "XGB_Prediction": "DOWN",
+        "XGB_Probability_Up": 0.48518237471580505,
+        "LR_Prediction": "DOWN",
+        "LR_Probability_Up": 0.3330043879440748,
+        "GB_Prediction": "DOWN",
+        "GB_Probability_Up": 0.27282002403969463,
+        "Ensemble_Prediction": "DOWN",
+        "Ensemble_Confidence": 0.605796408760267,
+        "Market_Proxies": {
+            "Beta_90d": 1.445394773992887,
+            "Alpha_90d": -0.28865190981675104,
+            "VolAdj_Return": 0.016430270057801268,
+            "PriceVolume_Ratio": 3.3381424671221085
+        },
+        "Model_Weights": {
+            "RF": 0.23608445297504796,
+            "XGB": 0.2571976967370441,
+            "LR": 0.2571976967370441,
+            "GB": 0.2495201535508637
+        },
+        "Date": "2026-02-22"
+    },
+    "AMD": {
+        "RF_Prediction": "DOWN",
+        "RF_Probability_Up": 0.4511578546793206,
+        "XGB_Prediction": "UP",
+        "XGB_Probability_Up": 0.5038207173347473,
+        "LR_Prediction": "UP",
+        "LR_Probability_Up": 0.678649743080817,
+        "GB_Prediction": "DOWN",
+        "GB_Probability_Up": 0.24609930514747397,
+        "Ensemble_Prediction": "DOWN",
+        "Ensemble_Confidence": 0.5354510646321355,
+        "Market_Proxies": {
+            "Beta_90d": 2.8157795524920175,
+            "Alpha_90d": -0.4166143080562482,
+            "VolAdj_Return": 0.3234774776663908,
+            "PriceVolume_Ratio": 5.053034127974857
+        },
+        "Model_Weights": {
+            "RF": 0.24865831842576028,
+            "XGB": 0.2504472271914132,
+            "LR": 0.23792486583184255,
+            "GB": 0.26296958855098385
+        },
+        "Date": "2026-02-22"
+    },
+    "TSCO": {
+        "RF_Prediction": "DOWN",
+        "RF_Probability_Up": 0.4609379991180637,
+        "XGB_Prediction": "UP",
+        "XGB_Probability_Up": 0.5020360350608826,
+        "LR_Prediction": "UP",
+        "LR_Probability_Up": 0.5188239992478085,
+        "GB_Prediction": "DOWN",
+        "GB_Probability_Up": 0.1192432952713631,
+        "Ensemble_Prediction": "DOWN",
+        "Ensemble_Confidence": 0.5926679611078178,
+        "Market_Proxies": {
+            "Beta_90d": 0.504641169097745,
+            "Alpha_90d": -0.06774849876215266,
+            "VolAdj_Return": -0.41341725668832296,
+            "PriceVolume_Ratio": 6.445722338282909
+        },
+        "Model_Weights": {
+            "RF": 0.23193916349809887,
+            "XGB": 0.27566539923954375,
+            "LR": 0.2585551330798479,
+            "GB": 0.2338403041825095
+        },
+        "Date": "2026-02-22"
+    },
+    "WMT": {
+        "RF_Prediction": "UP",
+        "RF_Probability_Up": 0.5185772995202236,
+        "XGB_Prediction": "DOWN",
+        "XGB_Probability_Up": 0.49434909224510193,
+        "LR_Prediction": "DOWN",
+        "LR_Probability_Up": 0.47710538270076697,
+        "GB_Prediction": "DOWN",
+        "GB_Probability_Up": 0.4328989903821046,
+        "Ensemble_Prediction": "DOWN",
+        "Ensemble_Confidence": 0.5194910318007863,
+        "Market_Proxies": {
+            "Beta_90d": -0.24464169219054901,
+            "Alpha_90d": 0.5727731694384361,
+            "VolAdj_Return": -0.6604044315298877,
+            "PriceVolume_Ratio": 4.652689697483219
+        },
+        "Model_Weights": {
+            "RF": 0.23625254582484728,
+            "XGB": 0.25050916496945014,
+            "LR": 0.2708757637474542,
+            "GB": 0.2423625254582485
+        },
+        "Date": "2026-02-22"
     }
-]
+}

@@ -1,4 +1,5 @@
-1. Add the AlphaPredictor to the agent system.
+1. Add the AlphaPredictor to the agent system. (done)
 2. Fix the UI if possible.
 3. Find the best startegy to work with this system.
 4. We ned to backtest the system, analyze where it fails and where it succeeds.
+5. Tran more ML models to predict the market movement. We will use essamble of models.(done)

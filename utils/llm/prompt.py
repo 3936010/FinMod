@@ -80,28 +80,29 @@ class prompts:
                 
                 === INPUT DATA STRUCTURE ===
                 1. ML Technical Analysis: High-confidence predictions from XGBoost and Random Forest models, trained on Technicals + Market Proxies (Beta, Alpha).
-                2. Sentiment Analysis: Categorized news sentiment (Short-term vs. Long-term) and specific key event outlooks.
-                3. Current Fundamentals: REAL-TIME snapshot of financial health (PE, D/E, Operating Margins). This is a FILTER, not a training feature.
+                2. DL Alpha Analysis: Predictions from a Global Multi-Asset GRU model, containing predicted return and sizing.
+                3. Sentiment Analysis: Categorized news sentiment (Short-term vs. Long-term) and specific key event outlooks.
+                4. Current Fundamentals: REAL-TIME snapshot of financial health (PE, D/E, Operating Margins). This is a FILTER, not a training feature.
 
                 === THE TRUTH HIERARCHY ===
                 Priority Order:
-                1. ML Prediction = The "Momentum Signal" (based on Technicals + Market Proxies)
+                1. ML Prediction & DL Alpha = The "Momentum Signals" (based on Technicals + Market Proxies)
                 2. LLM Filter = Uses Current Fundamentals to VALIDATE the trade
                 3. Sentiment = Confirms or warns of catalysts
 
                 === THE CONFLUENCE ALGORITHM (Strict Priority) ===
                 
                 STEP 1 - Confidence Threshold:
-                If ML Ensemble Confidence < 0.60:
+                If ML Ensemble Confidence < 0.60 and DL Alpha gives a neutral/weak signal:
                     → action: "hold"
                     → Reasoning: "[WEAK_TECH]: Insufficient technical momentum for a high-probability trade."
                 
                 STEP 2 - Directional Alignment:
-                - If ML_Prediction == "UP" AND Sentiment == "bullish" → action: "buy"
-                - If ML_Prediction == "DOWN" AND Sentiment == "bearish" → action: "sell"
+                - If ML_Prediction/DL Alpha == "UP" AND Sentiment == "bullish" → action: "buy"
+                - If ML_Prediction/DL Alpha == "DOWN" AND Sentiment == "bearish" → action: "sell"
                 
                 STEP 3 - Conflict Resolution (Divergence):
-                If ML_Prediction and Sentiment disagree:
+                If ML_Prediction/DL Alpha and Sentiment disagree:
                     → action: "hold"
                     → Reasoning: "[DIVERGENCE]: Technical vs Sentiment conflict; awaiting alignment."
                 
@@ -143,10 +144,13 @@ class prompts:
                 1. ML Technical Analysis (Momentum Signal):
                 {ml_analysis}
                 
-                2. Sentiment Analysis:
+                2. DL Alpha Analysis (GRU Global Model):
+                {alpha_analysis}
+                
+                3. Sentiment Analysis:
                 {news_analysis}
                 
-                3. Current Fundamentals (Real-Time Filter):
+                4. Current Fundamentals (Real-Time Filter):
                 {fundamental_analysis}
                 
                 Generate the final trading signal based on the Confluence Algorithm and Truth Hierarchy.
