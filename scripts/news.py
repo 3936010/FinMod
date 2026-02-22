@@ -18,6 +18,7 @@ from utils.llm.api_call import call_llm
 from langchain_core.prompts import ChatPromptTemplate
 # Reload modules to pick up changes
 import importlib
+import datetime
 import utils.polygon_utils
 import utils.llm.prompt
 import utils.llm.api_call
@@ -29,17 +30,21 @@ from utils.llm.prompt import prompts as p
 from utils.llm.api_call import call_llm
 
 class NewsAnalyzer:
-    def __init__(self, ticker):
+    def __init__(self, ticker, start_date=datetime.date.today() - datetime.timedelta(days=7), end_date=datetime.date.today(), provider="Ollama"):
         self.ticker = ticker
         self.pl = polygon()
-        # self.model_name = "qwen3:8b"
-        # self.model_provider = "Ollama"
-        self.model_name = "gemini-1.5-flash"
-        self.model_provider = "Gemini"
+        if provider == "Ollama":
+            self.model_name = "gpt-oss:20b"
+            self.model_provider = "Ollama"
+        elif provider == "Gemini":
+            self.model_name = "gemini-2.5-flash"
+            self.model_provider = "Gemini"
         self.max_retries = 3
+        self.start_date = start_date
+        self.end_date = end_date
 
-    def analyze_news(self, start_date='2026-02-01', end_date='2026-02-05'):
-        nvdia_news, nvdia_news_df = self.pl.get_news(self.ticker, start_date, end_date, limit=1000, strict=False)
+    def analyze_news(self):
+        nvdia_news, nvdia_news_df = self.pl.get_news(self.ticker, self.start_date, self.end_date, limit=1000, strict=False)
         
         if nvdia_news_df is None or nvdia_news_df.empty:
             print("No news found")

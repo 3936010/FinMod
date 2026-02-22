@@ -410,27 +410,31 @@ class StockPredictor:
 
     def predict_next_day(self):
         """Predict next day movement using technical + market proxy features."""
-        ticker_obj = yf.Ticker(self.ticker)
-        hist = ticker_obj.history(period="max")
-        
-        # Remove unnecessary columns
-        for col in ["Dividends", "Stock Splits"]:
-            if col in hist.columns:
-                del hist[col]
-        
-        # Calculate technical features
-        hist = self._calculate_features(hist)
-        
-        # Add market proxy features (same as training)
-        hist = self._add_market_proxy_features(hist)
-        
-        # Clean data pipe
-        hist.replace([np.inf, -np.inf], np.nan, inplace=True)
-        hist = hist.ffill()
-        hist.dropna(inplace=True)
-        
-        # Get latest data point
-        X_latest = hist[self.features].iloc[-1:]
+        # Optimization: Use already processed data if available to avoid re-downloading
+        if self.data is not None and not self.data.empty:
+            X_latest = self.data[self.features].iloc[-1:]
+        else:
+            ticker_obj = yf.Ticker(self.ticker)
+            hist = ticker_obj.history(period="max")
+            
+            # Remove unnecessary columns
+            for col in ["Dividends", "Stock Splits"]:
+                if col in hist.columns:
+                    del hist[col]
+            
+            # Calculate technical features
+            hist = self._calculate_features(hist)
+            
+            # Add market proxy features (same as training)
+            hist = self._add_market_proxy_features(hist)
+            
+            # Clean data pipe
+            hist.replace([np.inf, -np.inf], np.nan, inplace=True)
+            hist = hist.ffill()
+            hist.dropna(inplace=True)
+            
+            # Get latest data point
+            X_latest = hist[self.features].iloc[-1:]
         X_latest_scaled = self.scaler.transform(X_latest)
         
         # Predictions

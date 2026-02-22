@@ -9,13 +9,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import yfinance as yf
 from scripts.news import NewsAnalyzer
 from scripts.ml_market_movement import StockPredictor
+from scripts.dl_alpha_production import AlphaPredictor
 from utils.llm.prompt import prompts as p
 from utils.llm.api_call import call_llm
 from utils.data_models import MarketPrediction
-import importlib
-import utils.llm.prompt
-importlib.reload(utils.llm.prompt) # Reload prompts to get the new template
-
 
 class MarketAgent:
     """
@@ -37,13 +34,14 @@ class MarketAgent:
     
     def __init__(self, ticker):
         self.ticker = ticker
-        self.news_analyzer = NewsAnalyzer(ticker)
         # Note: use_fundamentals flag is kept for backward compat but fundamentals 
         # are no longer used in ML training
         self.stock_predictor = StockPredictor(ticker, use_fundamentals=False)
-        self.model_name = "gemma3:27b"
+        self.alpha_predictor = AlphaPredictor("/home/sd/FinMod/models/alpha_gru_v1")
+        self.model_name = "gpt-oss:20b"
         self.model_provider = "Ollama"
         self.max_retries = 3
+        self.news_analyzer = NewsAnalyzer(ticker, provider=self.model_provider)
 
     def _fetch_current_fundamentals(self):
         """
@@ -123,6 +121,18 @@ class MarketAgent:
             import traceback
             traceback.print_exc()
             ml_analysis = {"error": str(e)}
+            
+        # 1.5 DL Alpha Prediction
+        print("\n--- Running DL Alpha Prediction ---")
+        alpha_analysis = {}
+        try:
+            alpha_analysis = self.alpha_predictor.predict_next_price(self.ticker)
+            pprint(alpha_analysis)
+        except Exception as e:
+            print(f"DL Alpha Prediction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            alpha_analysis = {"error": str(e)}
         
         # 2. News Analysis
         print("\n--- Running News Analysis ---")
@@ -150,6 +160,7 @@ class MarketAgent:
         prompt = template.invoke({
             "ticker": self.ticker,
             "ml_analysis": json.dumps(ml_analysis, indent=2),
+            "alpha_analysis": json.dumps(alpha_analysis, indent=2),
             "news_analysis": json.dumps(news_analysis, indent=2),
             "fundamental_analysis": json.dumps(fundamental_analysis, indent=2)
         })
