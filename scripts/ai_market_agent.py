@@ -36,7 +36,7 @@ class MarketAgent:
         self.ticker = ticker
         # Note: use_fundamentals flag is kept for backward compat but fundamentals 
         # are no longer used in ML training
-        self.stock_predictor = StockPredictor(ticker, use_fundamentals=False)
+        self.stock_predictor = StockPredictor(ticker)
         self.alpha_predictor = AlphaPredictor("/home/sd/FinMod/models/alpha_gru_v1")
         self.model_name = "gpt-oss:20b"
         self.model_provider = "Ollama"
