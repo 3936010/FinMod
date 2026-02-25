@@ -1,5 +1,9 @@
 from scripts.ml_market_movement_fixed import StockPredictor
 ticker_list = ['QCOM', 'NVDA', 'AAPL', 'AMZN', 'AMD', 'TSCO', 'WMT',]
+
+
+
+# loop through ticker list and run ml_market_movement_fixed for each ticker
 for ticker in ticker_list:
     # Create predictor with fundamentals enabled
     predictor = StockPredictor(ticker)
