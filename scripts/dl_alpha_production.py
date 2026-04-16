@@ -240,10 +240,13 @@ class ProductionTrainer:
             processed_data.append((X_asset, y_asset))
             
         # 2. Fit Scaler (Robust to Outliers)
-        print("  [Scaler] Fitting RobustScaler on full history...")
+        # Fit only on the training portion (first 90%) to prevent the scaler from
+        # learning statistics from future validation data (look-ahead bias).
+        print("  [Scaler] Fitting RobustScaler on training portion only...")
         all_X = np.concatenate([p[0] for p in processed_data], axis=0)
+        train_end = int(0.9 * len(all_X))
         scaler = RobustScaler()
-        scaler.fit(all_X)
+        scaler.fit(all_X[:train_end])
         
         # Save Scaler
         with open(self.output_dir / "robust_scaler.pkl", "wb") as f:
@@ -270,11 +273,14 @@ class ProductionTrainer:
             torch.from_numpy(y_train).float()
         )
         
+        # Chronological split — random_split would allow future windows into training,
+        # which is look-ahead bias for time-series data. Use Subset with sequential indices.
+        # shuffle=False on train_loader preserves temporal order during training.
         train_size = int(0.9 * len(dataset))
-        val_size = len(dataset) - train_size
-        train_ds, val_ds = torch.utils.data.random_split(dataset, [train_size, val_size])
-        
-        train_loader = DataLoader(train_ds, batch_size=CONFIG["batch_size"], shuffle=True, pin_memory=True)
+        train_ds   = torch.utils.data.Subset(dataset, range(0, train_size))
+        val_ds     = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
+
+        train_loader = DataLoader(train_ds, batch_size=CONFIG["batch_size"], shuffle=False, pin_memory=True)
         val_loader   = DataLoader(val_ds, batch_size=CONFIG["batch_size"], shuffle=False)
         
         # 4. Model Setup

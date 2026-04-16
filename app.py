@@ -7,7 +7,7 @@ import json
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import yfinance as yf
-from scripts.ai_market_agent import MarketAgent
+from scripts.ai_market_agent import MarketAgent, fetch_current_fundamentals
 from scripts.ml_market_movement import StockPredictor
 from scripts.dl_alpha_production import AlphaPredictor
 from scripts.news import NewsAnalyzer
@@ -15,9 +15,12 @@ from utils.risk_manager import RiskManager
 from utils.llm.prompt import prompts as p
 from utils.llm.api_call import call_llm
 from utils.data_models import MarketPrediction
+from utils.signal_logger import SignalLogger
 
 import plotly.graph_objects as go
 import pandas as pd
+from pathlib import Path
+from datetime import date, timedelta, datetime
 
 # Page Configuration
 st.set_page_config(
@@ -55,20 +58,25 @@ st.markdown("""
 st.sidebar.title("⚙️ Configuration")
 ticker = st.sidebar.text_input("Ticker Symbol", value="AAPL").upper()
 total_cash = st.sidebar.slider("Portfolio Cash ($)", min_value=100, max_value=1000, value=500, step=50)
-# model_options = ["llama3.2:3b", "gpt-oss:20b", "gpt-oss:20b"]
-model_options = ["gemini-2.5-flash"]
+# Map model names to their provider — add entries here when new models are available
+MODEL_PROVIDER_MAP = {
+    "gemini-2.5-flash": "Gemini",
+    "gpt-oss:20b":      "Ollama",
+}
+model_options  = list(MODEL_PROVIDER_MAP.keys())
 selected_model = st.sidebar.selectbox("LLM Model", model_options)
+selected_provider = MODEL_PROVIDER_MAP[selected_model]
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 News Date Range")
 news_start_date = st.sidebar.date_input(
     "Start Date",
-    value=pd.to_datetime("2026-02-01"),
+    value=date.today() - timedelta(days=10),
     help="Start date for news analysis"
 )
 news_end_date = st.sidebar.date_input(
     "End Date",
-    value=pd.to_datetime("2026-02-05"),
+    value=date.today(),
     help="End date for news analysis"
 )
 
@@ -77,13 +85,31 @@ run_analysis = st.sidebar.button("🚀 Run Analysis", type="primary", use_contai
 
 
 # --- Cached Model Training ---
+_MODELS_DIR = Path(__file__).parent / "models" / "ml_predictors"
+_MODEL_STALENESS_DAYS = 7
+
 @st.cache_resource
 def get_trained_predictor(ticker_symbol: str):
-    """Cache the trained StockPredictor to avoid retraining on UI refresh."""
-    # use_fundamentals=False because fundamentals are now fetched separately as real-time filter
-    predictor = StockPredictor(ticker_symbol, use_fundamentals=False)
+    """
+    Load a persisted model if it is fresh (< 7 days old).
+    Retrain and save only when the model is missing or stale.
+    st.cache_resource ensures this runs once per session.
+    """
+    _MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = _MODELS_DIR / f"{ticker_symbol}_predictor.pkl"
+    predictor  = StockPredictor(ticker_symbol)
+
+    if model_path.exists():
+        age = datetime.now() - datetime.fromtimestamp(model_path.stat().st_mtime)
+        if age < timedelta(days=_MODEL_STALENESS_DAYS):
+            predictor.load_models(str(model_path))
+            # Fresh data for prediction is fetched inside predict_next_day()
+            return predictor
+
+    # Missing or stale — full retrain
     predictor.data_processing()
     predictor.train_models()
+    predictor.save_models(str(model_path))
     return predictor
 
 @st.cache_resource
@@ -119,20 +145,18 @@ if run_analysis:
             
             # 2. News Analysis
             st.info("📰 Analyzing news sentiment...")
-            news_analyzer = NewsAnalyzer(ticker)
-            news_analyzer.model_name = selected_model
             # Convert date objects to string format (YYYY-MM-DD)
             start_date_str = news_start_date.strftime('%Y-%m-%d')
             end_date_str = news_end_date.strftime('%Y-%m-%d')
-            sentiment_result, sentiment_by_date = news_analyzer.analyze_news(
-                start_date=start_date_str,
-                end_date=end_date_str
-            )
+            # Pass dates at construction time — analyze_news() takes no arguments
+            news_analyzer = NewsAnalyzer(ticker, start_date=start_date_str, end_date=end_date_str, provider="Gemini")
+            news_analyzer.model_name = selected_model
+            sentiment_result, sentiment_by_date = news_analyzer.analyze_news()
             news_analysis = sentiment_result.model_dump() if sentiment_result else {"info": "No news found"}
             
             # 3. Fetch Current Fundamentals (Real-Time Filter for LLM)
             st.info("🏢 Fetching current fundamentals...")
-            fundamental_analysis = MarketAgent(ticker)._fetch_current_fundamentals()
+            fundamental_analysis = fetch_current_fundamentals(ticker)
             
             # 4. LLM Final Decision
             st.info("🤖 Generating final trading signal...")
@@ -149,7 +173,7 @@ if run_analysis:
             final_prediction = call_llm(
                 prompt,
                 selected_model,
-                "Gemini", # Was "Ollama"
+                selected_provider,
                 MarketPrediction,
                 max_retries=3
             )
@@ -228,17 +252,36 @@ if run_analysis:
                 st.markdown("### 🎯 LLM Reasoning")
                 st.info(final_prediction.reasoning)
             
-            # Risk Management (if BUY or SELL)
+            # Risk Management + Signal Logging (if BUY or SELL)
             if action in ["buy", "sell"]:
                 st.markdown("---")
                 st.subheader("⚠️ Risk Management")
-                
+
                 risk_manager = RiskManager()
                 risk_output = risk_manager.calculate_entry(
                     total_cash=total_cash,
                     current_price=current_price,
                     atr=atr,
-                    llm_confidence=final_prediction.confidence
+                    llm_confidence=final_prediction.confidence,
+                    direction=action
+                )
+
+                # Log the signal for 3-month outcome tracking
+                SignalLogger().log_signal(
+                    ticker           = ticker,
+                    action           = action,
+                    confidence       = final_prediction.confidence,
+                    reasoning        = final_prediction.reasoning,
+                    ml_prediction    = ml_analysis.get("Ensemble_Prediction", "N/A"),
+                    ml_confidence    = ml_analysis.get("Ensemble_Confidence", 0.0),
+                    dl_direction     = alpha_analysis.get("direction", "N/A"),
+                    dl_position_size = alpha_analysis.get("position_size", 0.0),
+                    news_sentiment   = (news_analysis.get("short_term_sentiment") or {}).get("short_term_sentiment", "N/A"),
+                    current_price    = float(current_price),
+                    stop_loss        = risk_output["stop_loss_price"],
+                    take_profit      = risk_output["take_profit_price"],
+                    shares           = risk_output["shares_to_buy"],
+                    atr              = float(atr),
                 )
                 
                 # Position Value Metric

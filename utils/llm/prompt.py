@@ -80,9 +80,19 @@ class prompts:
                 
                 === INPUT DATA STRUCTURE ===
                 1. ML Technical Analysis: High-confidence predictions from XGBoost and Random Forest models, trained on Technicals + Market Proxies (Beta, Alpha).
-                2. DL Alpha Analysis: Predictions from a Global Multi-Asset GRU model, containing predicted return and sizing.
-                3. Sentiment Analysis: Categorized news sentiment (Short-term vs. Long-term) and specific key event outlooks.
+                   - Direction field: "Ensemble_Prediction" → values are "UP" or "DOWN"
+                   - Confidence field: "Ensemble_Confidence" → float 0.0–1.0
+                2. DL Alpha Analysis: Predictions from a Global Multi-Asset GRU model.
+                   - Direction field: "direction" → values are "Bullish", "Bearish", or "Neutral"
+                   - Sizing field: "position_size" → float -1.0 to 1.0 (negative = short bias)
+                3. Sentiment Analysis: Categorized news sentiment (Short-term vs. Long-term) and specific key event outlooks. Also includes a "daily_breakdown" with per-day catalysts.
                 4. Current Fundamentals: REAL-TIME snapshot of financial health (PE, D/E, Operating Margins). This is a FILTER, not a training feature.
+
+                === SIGNAL VOCABULARY MAPPING ===
+                Treat ML and DL directions as equivalent using this mapping:
+                - ML "UP"   ↔ DL "Bullish"  → bullish technical signal
+                - ML "DOWN" ↔ DL "Bearish"  → bearish technical signal
+                - DL "Neutral" (|position_size| < 0.3) → weak/no DL signal
 
                 === THE TRUTH HIERARCHY ===
                 Priority Order:
@@ -91,22 +101,29 @@ class prompts:
                 3. Sentiment = Confirms or warns of catalysts
 
                 === THE CONFLUENCE ALGORITHM (Strict Priority) ===
-                
+
                 STEP 1 - Confidence Threshold:
-                If ML Ensemble Confidence < 0.60 and DL Alpha gives a neutral/weak signal:
+                If ML Ensemble Confidence < 0.60 AND (DL direction is "Neutral" OR |position_size| < 0.3):
                     → action: "hold"
                     → Reasoning: "[WEAK_TECH]: Insufficient technical momentum for a high-probability trade."
-                
-                STEP 2 - Directional Alignment:
-                - If ML_Prediction/DL Alpha == "UP" AND Sentiment == "bullish" → action: "buy"
-                - If ML_Prediction/DL Alpha == "DOWN" AND Sentiment == "bearish" → action: "sell"
-                
-                STEP 3 - Conflict Resolution (Divergence):
-                If ML_Prediction/DL Alpha and Sentiment disagree:
+
+                STEP 2 - ML vs DL Disagreement:
+                If ML and DL point in OPPOSITE directions (e.g. ML="UP" but DL="Bearish", or ML="DOWN" but DL="Bullish"):
+                    → If ML Ensemble Confidence < 0.65 OR |DL position_size| < 0.4:
+                        → action: "hold"
+                        → Reasoning: "[DIVERGENCE]: ML/DL technical disagreement with insufficient conviction to override."
+                    → Otherwise: weight toward the signal with higher conviction (higher ML confidence or larger |position_size|) and proceed to Step 3.
+
+                STEP 3 - Directional Alignment with Sentiment:
+                - If both ML and DL signal bullish ("UP" / "Bullish") AND short_term_sentiment == "bullish" → action: "buy"
+                - If both ML and DL signal bearish ("DOWN" / "Bearish") AND short_term_sentiment == "bearish" → action: "sell"
+
+                STEP 4 - Conflict Resolution (Technical vs Sentiment Divergence):
+                If the technical signal (ML + DL composite) and Sentiment disagree:
                     → action: "hold"
                     → Reasoning: "[DIVERGENCE]: Technical vs Sentiment conflict; awaiting alignment."
-                
-                STEP 4 - FUNDAMENTAL FILTER (CRITICAL):
+
+                STEP 5 - FUNDAMENTAL FILTER (CRITICAL):
                 This step ONLY applies if action == "buy". Check Current Fundamentals:
                 
                 ⚠️ OVERVALUATION CHECK:
@@ -154,7 +171,10 @@ class prompts:
                 {fundamental_analysis}
                 
                 Generate the final trading signal based on the Confluence Algorithm and Truth Hierarchy.
-                Remember: Apply the fundamental filter if action is "buy" - check PE_Assessment and Debt_Assessment fields.
+                Remember:
+                - Map ML "UP"/"DOWN" ↔ DL "Bullish"/"Bearish" before comparing directions.
+                - Apply the fundamental filter (Step 5) only if action is "buy" — check PE_Assessment and Debt_Assessment fields.
+                - action must be exactly one of: "hold", "buy", "sell".
                 """
             )
         ]

@@ -40,176 +40,239 @@ class StockPredictor:
         self.y_train = None
         self.y_test = None
         self.data = None
-        self.market_proxy_features = {}  # Latest market proxy values for display
-        self.model_weights = {'RF': 0.25, 'XGB': 0.25, 'LR': 0.25, 'GB': 0.25}  # Default weights for ensemble
+        self.market_proxy_features = {}  # Latest values for display
+        self.model_weights = {'RF': 0.25, 'XGB': 0.25, 'LR': 0.25, 'GB': 0.25}
 
-        # Technical features
+        # ── Technical features ────────────────────────────────────────────────
+        # Removed: raw MAs (scale-dependent, correlated with Price_to_MA ratios),
+        # High/Low (captured by BB_Position/ATR), Momentum (redundant with Return_Lag1
+        # + MACD), Volume_MA_Ratio (redundant with VolumeSpike), Stochastic_D
+        # (3-day MA of K — adds lag not info), Return_Lag2/3 (autocorrelation at
+        # 2-3 days in equities is near zero).
         self.technical_features = [
-            # Price features
-            'High', 'Low', 'Volume',
-            # Moving averages
-            'MA5', 'MA10', 'MA20', 'MA50',
-            # Price relative to MAs
-            'Price_to_MA5', 'Price_to_MA20',
-            # Momentum indicators
-            'RSI', 'Momentum', 'MACD', 'MACD_Signal',
-            # Volatility indicators
-            'Volatility', 'ATR', 'BB_Width', 'BB_Position',
-            # Volume indicators
-            'VolumeSpike', 'Volume_MA_Ratio',
-            # Other
-            'Gap', 'Stochastic_K', 'Stochastic_D',
-            # Lag features
-            'Return_Lag1', 'Return_Lag2', 'Return_Lag3'
+            # Normalised price position vs moving averages
+            'Price_to_MA5',       # short-term mean-reversion signal
+            'Price_to_MA20',      # medium-term trend signal
+            'Price_to_MA50',      # medium-long trend signal
+            # Momentum / oscillators
+            'RSI',                # overbought / oversold
+            'MACD',               # trend momentum
+            'MACD_Signal',        # signal line
+            'MACD_Hist',          # histogram = convergence / divergence speed
+            'Stochastic_K',       # fast stochastic (overbought/oversold)
+            # Volatility
+            'Volatility',         # 10-day rolling return std
+            'ATR',                # 14-day average true range
+            'BB_Width',           # Bollinger Band width (volatility regime)
+            'BB_Position',        # where price sits inside the band
+            # Volume
+            'Volume',             # raw volume (log-scale information)
+            'VolumeSpike',        # today vs 20-day avg (unusual activity)
+            # Price action
+            'Gap',                # overnight gap (institutional signal)
+            'Return_Lag1',        # prior-day return (short-term momentum)
         ]
 
-        # Market proxy features (replaces fundamental features to prevent data leakage)
+        # ── Market proxy features ─────────────────────────────────────────────
         self.market_proxy_feature_names = [
-            'Beta_90d',           # 90-day rolling correlation with SPY
-            'Alpha_90d',          # Excess return relative to Beta-adjusted SPY
-            'VolAdj_Return',      # Return divided by 20-day ATR/StdDev (shifted to prevent leakage)
-            'PriceVolume_Ratio'   # Close / 20-day average volume (shifted to prevent leakage)
+            'Beta_90d',           # 90-day rolling beta vs SPY
+            'Alpha_90d',          # annualised excess return vs beta-adjusted SPY
+            'VolAdj_Return',      # prior-day return / prior 20-day vol (shifted)
+            'PriceVolume_Ratio',  # prior close / prior 20-day avg volume (shifted)
         ]
 
-        # Training uses ONLY technical + market proxy features (NO fundamentals)
-        self.features = self.technical_features + self.market_proxy_feature_names
+        # ── Regime features ───────────────────────────────────────────────────
+        # Give the model context about the current market environment.
+        # A momentum signal that works in a bull trend fails in a choppy market —
+        # these three features let the model condition on that.
+        self.regime_feature_names = [
+            'VIX',                # CBOE fear index (absolute level)
+            'SPY_above_200MA',    # 1 = bull regime, 0 = bear regime
+            'SPY_ATR_pct',        # SPY 14-day ATR as % of price (volatility context)
+        ]
+
+        # Full feature set used for training and inference
+        self.features = (
+            self.technical_features
+            + self.market_proxy_feature_names
+            + self.regime_feature_names
+        )
 
     def _calculate_features(self, data):
-        """Calculate all technical indicators and features."""
+        """
+        Calculate technical indicators used as model features.
+
+        Design principles:
+        - Use normalised ratios (Price_to_MA) not raw MA levels — scale-invariant,
+          works across different price ranges and time periods.
+        - One indicator per concept: MACD_Hist captures momentum convergence better
+          than keeping both raw MACD and a redundant Stochastic_D (which is just a
+          3-day MA of Stochastic_K).
+        - Lag features: only Return_Lag1 — autocorrelation in equities drops to
+          near zero beyond 1 day, Lag2/3 add noise not signal.
+        """
         # Daily Returns
         data['Return'] = data['Close'].pct_change()
 
-        # Moving Averages
-        data['MA5'] = data['Close'].rolling(window=5).mean()
-        data['MA10'] = data['Close'].rolling(window=10).mean()
-        data['MA20'] = data['Close'].rolling(window=20).mean()
-        data['MA50'] = data['Close'].rolling(window=50).mean()
+        # ── Moving averages (internal — used for ratios only, not features) ──
+        data['_MA5']  = data['Close'].rolling(window=5).mean()
+        data['_MA20'] = data['Close'].rolling(window=20).mean()
+        data['_MA50'] = data['Close'].rolling(window=50).mean()
 
-        # Price relative to moving averages (%)
-        data['Price_to_MA5'] = (data['Close'] / data['MA5'] - 1) * 100
-        data['Price_to_MA20'] = (data['Close'] / data['MA20'] - 1) * 100
+        # Normalised price position vs each MA (%)
+        # Scale-invariant — works the same for a $10 stock and a $1000 stock
+        data['Price_to_MA5']  = (data['Close'] / data['_MA5']  - 1) * 100
+        data['Price_to_MA20'] = (data['Close'] / data['_MA20'] - 1) * 100
+        data['Price_to_MA50'] = (data['Close'] / data['_MA50'] - 1) * 100
 
-        # Rolling Standard Deviation (Volatility)
+        # ── Volatility ────────────────────────────────────────────────────────
         data['Volatility'] = data['Return'].rolling(window=10).std()
 
-        # RSI (Relative Strength Index)
-        data['Delta'] = data['Close'].diff()
-        data['Gain'] = data['Delta'].where(data['Delta'] > 0, 0)
-        data['Loss'] = -data['Delta'].where(data['Delta'] < 0, 0)
-        data['AvgGain'] = data['Gain'].rolling(window=14).mean()
-        data['AvgLoss'] = data['Loss'].rolling(window=14).mean()
-        data['RS'] = data['AvgGain'] / (data['AvgLoss'] + 1e-10)
-        data['RSI'] = 100 - (100 / (1 + data['RS']))
-
-        # Momentum
-        data['Momentum'] = data['Close'] - data['Close'].shift(5)
-
-        # Gap (overnight)
-        data['Gap'] = data['Open'] - data['Close'].shift(1)
-
-        # Volume indicators
-        # Shift rolling mean to avoid using current volume in the denominator (leakage prevention)
-        data['VolumeSpike'] = data['Volume'] / (data['Volume'].rolling(20).mean().shift(1) + 1e-10)
-        data['Volume_MA_Ratio'] = data['Volume'] / (data['Volume'].rolling(10).mean().shift(1) + 1e-10)
-
-        # MACD
-        ema12 = data['Close'].ewm(span=12, adjust=False).mean()
-        ema26 = data['Close'].ewm(span=26, adjust=False).mean()
-        data['MACD'] = ema12 - ema26
-        data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
-
         # ATR (Average True Range)
-        high_low = data['High'] - data['Low']
-        high_close = np.abs(data['High'] - data['Close'].shift())
-        low_close = np.abs(data['Low'] - data['Close'].shift())
+        high_low   = data['High'] - data['Low']
+        high_close = (data['High'] - data['Close'].shift(1)).abs()
+        low_close  = (data['Low']  - data['Close'].shift(1)).abs()
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         data['ATR'] = tr.rolling(window=14).mean()
 
         # Bollinger Bands
-        data['BB_Middle'] = data['Close'].rolling(window=20).mean()
+        bb_mid = data['Close'].rolling(window=20).mean()
         bb_std = data['Close'].rolling(window=20).std()
-        data['BB_Upper'] = data['BB_Middle'] + 2 * bb_std
-        data['BB_Lower'] = data['BB_Middle'] - 2 * bb_std
-        data['BB_Width'] = (data['BB_Upper'] - data['BB_Lower']) / data['BB_Middle']
-        data['BB_Position'] = (data['Close'] - data['BB_Lower']) / (data['BB_Upper'] - data['BB_Lower'])
+        bb_upper = bb_mid + 2 * bb_std
+        bb_lower = bb_mid - 2 * bb_std
+        data['BB_Width']    = (bb_upper - bb_lower) / (bb_mid + 1e-10)
+        data['BB_Position'] = (data['Close'] - bb_lower) / (bb_upper - bb_lower + 1e-10)
 
-        # Stochastic Oscillator
-        low_14 = data['Low'].rolling(window=14).min()
+        # ── Momentum / oscillators ────────────────────────────────────────────
+        # RSI (14)
+        delta = data['Close'].diff()
+        gain  = delta.where(delta > 0, 0).rolling(window=14).mean()
+        loss  = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        data['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-10)))
+
+        # MACD — EMA(12) − EMA(26), signal EMA(9), histogram = convergence speed
+        ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+        ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+        data['MACD']        = ema12 - ema26
+        data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+        data['MACD_Hist']   = data['MACD'] - data['MACD_Signal']  # divergence speed
+
+        # Stochastic K (fast, 14-period) — drop D (redundant MA of K)
+        low_14  = data['Low'].rolling(window=14).min()
         high_14 = data['High'].rolling(window=14).max()
-        data['Stochastic_K'] = 100 * (data['Close'] - low_14) / (high_14 - low_14)
-        data['Stochastic_D'] = data['Stochastic_K'].rolling(window=3).mean()
+        data['Stochastic_K'] = 100 * (data['Close'] - low_14) / (high_14 - low_14 + 1e-10)
 
-        # Lag features (previous day returns)
-        data['Return_Lag1'] = data['Return'].shift(1)
-        data['Return_Lag2'] = data['Return'].shift(2)
-        data['Return_Lag3'] = data['Return'].shift(3)
+        # ── Volume ────────────────────────────────────────────────────────────
+        # VolumeSpike: today vs prior 20-day avg (shift to prevent leakage)
+        data['VolumeSpike'] = data['Volume'] / (data['Volume'].rolling(20).mean().shift(1) + 1e-10)
+
+        # ── Price action ──────────────────────────────────────────────────────
+        data['Gap']         = data['Open'] - data['Close'].shift(1)   # overnight gap
+        data['Return_Lag1'] = data['Return'].shift(1)                 # prior-day momentum
 
         return data
 
-    def _add_market_proxy_features(self, data):
+    def _align_series(self, foreign: pd.Series, target_index: pd.DatetimeIndex) -> pd.Series:
         """
-        Calculate market proxy features to replace fundamentals.
-        These are rolling metrics that can be calculated from price/volume data only.
-
-        Features:
-        - Beta_90d: 90-day rolling covariance/variance with SPY (market sensitivity)
-        - Alpha_90d: Excess return relative to Beta-adjusted SPY return
-        - VolAdj_Return: Prior day's return divided by prior 20-day volatility (risk-adjusted momentum)
-          FIX #4: Both rolling_vol and return are now shifted by 1 to prevent today's data leaking in.
-        - PriceVolume_Ratio: Prior close divided by prior 20-day average volume (liquidity proxy)
-          FIX #4: avg_volume is now shifted by 1 to prevent today's volume leaking in.
+        Align a foreign time series to the ticker's DatetimeIndex.
+        Strips timezone and intraday time from both sides so reindex()
+        always finds matches even when providers differ on timezone.
         """
-        print("Calculating market proxy features...")
+        foreign_aligned = pd.Series(
+            foreign.values,
+            index=pd.DatetimeIndex(foreign.index).normalize().tz_localize(None)
+        )
+        target_dates = pd.DatetimeIndex(target_index).normalize().tz_localize(None)
+        return foreign_aligned.reindex(target_dates)
 
-        # Fetch SPY data for Beta/Alpha calculation
+    def _add_market_features(self, data):
+        """
+        Compute market proxy features (Beta, Alpha, VolAdj, PriceVolume) and
+        regime features (VIX, SPY_above_200MA, SPY_ATR_pct) in a single method
+        so SPY is only downloaded once.
+
+        All shifted features use prior-day values to prevent look-ahead leakage.
+        Regime features give the model market context — the same momentum signal
+        that works in a bull trend fails in a choppy/bear market.
+        """
+        print("Calculating market proxy + regime features...")
+
+        # ── SPY download (shared for proxy and regime features) ───────────────
         try:
-            spy = yf.Ticker("SPY")
-            spy_data = spy.history(period="max")
-            spy_data['SPY_Return'] = spy_data['Close'].pct_change()
+            spy_data  = yf.Ticker("SPY").history(period="max")
+            spy_close = self._align_series(spy_data['Close'], data.index)
+            spy_ret   = self._align_series(spy_data['Close'].pct_change(), data.index)
+            data['SPY_Return'] = spy_ret.values
 
-            # Align SPY data with ticker data by date
-            data['SPY_Return'] = spy_data['SPY_Return'].reindex(data.index)
+            # ── Market proxy: Beta & Alpha ────────────────────────────────────
+            roll_cov       = data['Return'].rolling(90).cov(data['SPY_Return'])
+            roll_var       = data['SPY_Return'].rolling(90).var()
+            data['Beta_90d']  = roll_cov / (roll_var + 1e-10)
+            excess            = data['Return'] - data['Beta_90d'] * data['SPY_Return']
+            data['Alpha_90d'] = excess.rolling(90).mean() * 252   # annualised
 
-            # Beta: 90-day rolling covariance / variance with SPY
-            rolling_cov = data['Return'].rolling(window=90).cov(data['SPY_Return'])
-            rolling_var = data['SPY_Return'].rolling(window=90).var()
-            data['Beta_90d'] = rolling_cov / rolling_var
+            # ── Regime: SPY above 200-day MA ──────────────────────────────────
+            spy_200ma = spy_close.rolling(200).mean()
+            spy_above = (spy_close > spy_200ma).astype(float)
+            data['SPY_above_200MA'] = self._align_series(spy_above, data.index).values
 
-            # Alpha: Excess return = Stock Return - (Beta * SPY Return)
-            # Use 90-day rolling mean of excess returns
-            excess_return = data['Return'] - (data['Beta_90d'] * data['SPY_Return'])
-            data['Alpha_90d'] = excess_return.rolling(window=90).mean() * 252  # Annualized
+            # ── Regime: SPY ATR % (current market volatility level) ───────────
+            spy_hi  = self._align_series(spy_data['High'],  data.index)
+            spy_lo  = self._align_series(spy_data['Low'],   data.index)
+            spy_tr  = pd.concat([
+                spy_hi - spy_lo,
+                (spy_hi - spy_close.shift(1)).abs(),
+                (spy_lo - spy_close.shift(1)).abs(),
+            ], axis=1).max(axis=1)
+            spy_atr = spy_tr.rolling(14).mean()
+            spy_atr_pct = (spy_atr / (spy_close + 1e-10)) * 100
+            data['SPY_ATR_pct'] = self._align_series(spy_atr_pct, data.index).values
 
-            # Clean up temporary column
             del data['SPY_Return']
 
         except Exception as e:
-            print(f"Warning: Could not calculate Beta/Alpha: {e}")
+            print(f"Warning: SPY features failed — using defaults. Reason: {e}")
             traceback.print_exc()
-            data['Beta_90d'] = 1.0  # Default to market beta
-            data['Alpha_90d'] = 0.0  # Default to no alpha
+            data['Beta_90d']       = 1.0
+            data['Alpha_90d']      = 0.0
+            data['SPY_above_200MA'] = 1.0
+            data['SPY_ATR_pct']    = 1.0
 
-        # FIX #4: VolAdj_Return — shift rolling vol by 1 so today's return is not divided
-        # by a volatility window that includes today. Consistent with volume feature treatment.
-        rolling_vol = data['Return'].rolling(window=20).std().shift(1)
-        data['VolAdj_Return'] = data['Return'].shift(1) / rolling_vol
+        # ── VIX (fear index) ──────────────────────────────────────────────────
+        try:
+            vix_data = yf.Ticker("^VIX").history(period="max")
+            data['VIX'] = self._align_series(vix_data['Close'], data.index).values
+        except Exception as e:
+            print(f"Warning: VIX download failed — using default 20. Reason: {e}")
+            data['VIX'] = 20.0
 
-        # FIX #4: PriceVolume_Ratio — shift avg_volume by 1 to prevent today's volume leaking in.
-        avg_volume = data['Volume'].rolling(window=20).mean().shift(1)
-        data['PriceVolume_Ratio'] = data['Close'].shift(1) / avg_volume
-        # Scale to reasonable range (values can be very small)
-        data['PriceVolume_Ratio'] = data['PriceVolume_Ratio'] * 1e6
+        # ── Market proxy: VolAdj & PriceVolume (shifted to prevent leakage) ──
+        rolling_vol = data['Return'].rolling(20).std().shift(1)
+        data['VolAdj_Return']    = data['Return'].shift(1) / (rolling_vol + 1e-10)
+        avg_volume               = data['Volume'].rolling(20).mean().shift(1)
+        data['PriceVolume_Ratio'] = (data['Close'].shift(1) / (avg_volume + 1e-10)) * 1e6
 
-        # Store latest values for display
+        # Store latest values for dashboard display
+        def _safe(col, default):
+            v = data[col].iloc[-1]
+            return float(v) if not pd.isna(v) else default
+
         self.market_proxy_features = {
-            'Beta_90d': float(data['Beta_90d'].iloc[-1]) if not pd.isna(data['Beta_90d'].iloc[-1]) else 1.0,
-            'Alpha_90d': float(data['Alpha_90d'].iloc[-1]) if not pd.isna(data['Alpha_90d'].iloc[-1]) else 0.0,
-            'VolAdj_Return': float(data['VolAdj_Return'].iloc[-1]) if not pd.isna(data['VolAdj_Return'].iloc[-1]) else 0.0,
-            'PriceVolume_Ratio': float(data['PriceVolume_Ratio'].iloc[-1]) if not pd.isna(data['PriceVolume_Ratio'].iloc[-1]) else 0.0
+            'Beta_90d':         _safe('Beta_90d',         1.0),
+            'Alpha_90d':        _safe('Alpha_90d',         0.0),
+            'VolAdj_Return':    _safe('VolAdj_Return',     0.0),
+            'PriceVolume_Ratio':_safe('PriceVolume_Ratio', 0.0),
+            'VIX':              _safe('VIX',              20.0),
+            'SPY_above_200MA':  _safe('SPY_above_200MA',   1.0),
+            'SPY_ATR_pct':      _safe('SPY_ATR_pct',       1.0),
         }
 
-        print(f"Market Proxy Features: Beta={self.market_proxy_features['Beta_90d']:.2f}, Alpha={self.market_proxy_features['Alpha_90d']:.2%}")
-
+        print(
+            f"Market features: Beta={self.market_proxy_features['Beta_90d']:.2f}, "
+            f"Alpha={self.market_proxy_features['Alpha_90d']:.2%}, "
+            f"VIX={self.market_proxy_features['VIX']:.1f}, "
+            f"SPY_bull={'Yes' if self.market_proxy_features['SPY_above_200MA'] else 'No'}"
+        )
         return data
 
     def data_processing(self, period="max", start_date="2015-01-01", test_pct=0.15):
@@ -232,18 +295,43 @@ class StockPredictor:
             if col in data.columns:
                 del data[col]
 
-        # Create target variable
-        data["Tomorrow"] = data["Close"].shift(-1)
-        data['Target'] = np.where(data['Tomorrow'] > data['Close'], 1, 0)
-
-        # Filter by start date
+        # Filter by start date first so feature windows are computed on relevant data
         data = data.loc[start_date:].copy()
 
-        # Calculate technical features
+        # Calculate technical features (ATR must exist before target construction)
         data = self._calculate_features(data)
 
-        # Add market proxy features (replaces fundamentals to prevent leakage)
-        data = self._add_market_proxy_features(data)
+        # Add market proxy + regime features (single SPY + VIX download)
+        data = self._add_market_features(data)
+
+        # ── Target variable: 3-day forward return with ATR noise filter ───────
+        #
+        # Why 3-day?  Swing trades play out over 2-5 days.  Next-day returns are
+        # dominated by noise (random gaps, intraday flows) — the signal-to-noise
+        # ratio is much better over 3 days.
+        #
+        # Why the ATR filter?  A 0.1% move is not a tradeable signal — it doesn't
+        # cover spread or risk.  We only train on days where a *meaningful* move
+        # occurred (≥ 0.5 × ATR), so the model learns to predict real directional
+        # moves, not random drift.  Rows with small moves are dropped — they are
+        # noise not signal.
+        data["Close_3d"] = data["Close"].shift(-3)
+        data.dropna(subset=["Close_3d"], inplace=True)   # removes last 3 rows
+
+        move = data["Close_3d"] - data["Close"]
+        threshold = 0.5 * data["ATR"]
+
+        data["Target"] = np.where(
+            move >  threshold,  1,           # meaningful UP move
+            np.where(
+                move < -threshold, 0,        # meaningful DOWN move
+                np.nan                       # noise — exclude from training
+            )
+        )
+        noise_rows = data["Target"].isna().sum()
+        data.dropna(subset=["Target"], inplace=True)
+        data["Target"] = data["Target"].astype(int)
+        print(f"ATR filter removed {noise_rows} noise rows — {len(data)} rows remain for training")
 
         # Clean Data Pipe: Handle holidays/gaps properly
         # 1. Replace infinities with NaN
@@ -529,8 +617,8 @@ class StockPredictor:
             # Calculate technical features
             hist = self._calculate_features(hist)
 
-            # Add market proxy features (same as training)
-            hist = self._add_market_proxy_features(hist)
+            # Add market proxy + regime features (same as training)
+            hist = self._add_market_features(hist)
 
             # Clean data pipe
             hist.replace([np.inf, -np.inf], np.nan, inplace=True)

@@ -2,6 +2,7 @@
 ## Original author: Virat Singh https://github.com/virattt
 ## Modified by Zexi Chen https://github.com/Chen-zexi
 
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
@@ -239,7 +240,9 @@ class AgentStateMetadata(BaseModel):
 
 class MarketPrediction(BaseModel):
     ticker: str
-    action: str  # "buy", "sell", "hold"
-    confidence: float
+    # "hold" is listed first so create_default_response() picks it as the safe
+    # fallback when the LLM fails (it uses __args__[0] for Literal fields).
+    action: Literal["hold", "buy", "sell"]
+    confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
 

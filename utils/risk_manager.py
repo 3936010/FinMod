@@ -8,7 +8,7 @@ class RiskManager:
     def __init__(self):
         pass
 
-    def calculate_entry(self, total_cash: float, current_price: float, atr: float, llm_confidence: float) -> dict:
+    def calculate_entry(self, total_cash: float, current_price: float, atr: float, llm_confidence: float, direction: str = "buy") -> dict:
         """
         Calculates optimal trade size and exit points.
 
@@ -17,6 +17,8 @@ class RiskManager:
             current_price: The current market price of the ticker.
             atr: The 14-day Average True Range.
             llm_confidence: The confidence score (0.0 - 1.0) from MarketPrediction.
+            direction: "buy" (long) or "sell" (short). Determines which side
+                       stop-loss and take-profit are placed.
 
         Returns:
             dict: {
@@ -32,12 +34,18 @@ class RiskManager:
         # 2. Adjust for Confidence: Actual_Risk = Base_Risk * llm_confidence
         actual_risk = base_risk * llm_confidence
 
-        # 3. Calculate Stop Loss: current_price - (2 * atr)
-        # Ensure stop loss is not negative
-        stop_loss_price = max(0.0, current_price - (2 * atr))
+        # 3. Calculate Stop Loss and Take Profit — direction-aware.
+        #    LONG:  SL below entry (current_price - 2*ATR), TP above (current_price + 3*ATR)
+        #    SHORT: SL above entry (current_price + 2*ATR), TP below (current_price - 3*ATR)
+        if direction == "sell":
+            stop_loss_price   = current_price + (2 * atr)
+            take_profit_price = max(0.0, current_price - (3 * atr))
+        else:  # "buy" / long (default)
+            stop_loss_price   = max(0.0, current_price - (2 * atr))
+            take_profit_price = current_price + (3 * atr)
 
-        # 4. Calculate Risk Per Share: current_price - Stop_Loss_Price
-        risk_per_share = current_price - stop_loss_price
+        # 4. Calculate Risk Per Share: distance from entry to stop loss
+        risk_per_share = abs(current_price - stop_loss_price)
         
         # Avoid division by zero if risk_per_share is 0 (unlikely but safe to handle)
         if risk_per_share <= 0:
@@ -60,9 +68,6 @@ class RiskManager:
             # Recalculate shares to fit cap
             shares_to_buy = int(max_position_value / current_price)
 
-        # Calculate Move-based Take Profit (Reward 1.5:1 -> 3 * ATR)
-        take_profit_price = current_price + (3 * atr)
-        
         final_position_value = shares_to_buy * current_price
 
         return {
