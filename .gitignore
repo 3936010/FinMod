@@ -228,3 +228,5 @@ local_data.db
 # local models
 *.pth
 *.pt
+/models
+.codex
