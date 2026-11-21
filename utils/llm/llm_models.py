@@ -13,6 +13,12 @@ class ModelProvider(str, Enum):
     # OLLAMA = "Ollama"  # Commented out as requested
     OLLAMA = "Ollama"
     GEMINI = "Gemini"
+    OPENROUTER = "OpenRouter"   # OpenAI-compatible gateway to many hosted models
+
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Override with OPENROUTER_MODEL in .env (any model id listed on openrouter.ai/models)
+OPENROUTER_DEFAULT_MODEL = "google/gemini-2.5-flash"
 
 
 
@@ -62,6 +68,13 @@ AVAILABLE_MODELS = [
     #     provider=ModelProvider.OLLAMA
     # ),
 
+    # OpenRouter Models (remote — used on the Jetson Nano instead of a local LLM)
+    LLMModel(
+        display_name="[openrouter] gemini-2.5-flash",
+        model_name="google/gemini-2.5-flash",
+        provider=ModelProvider.OPENROUTER
+    ),
+
     # Gemini Models
     LLMModel(
         display_name="[google] gemini-2.5-flash",
@@ -100,5 +113,16 @@ def get_model(model_name: str, model_provider: ModelProvider | str) -> ChatOpenA
             print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
             raise ValueError("Google API key not found. Please make sure GOOGLE_API_KEY is set in your .env file.")
         return ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key)
+    elif model_provider == ModelProvider.OPENROUTER:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            print("API Key Error: Please make sure OPENROUTER_API_KEY is set in your .env file.")
+            raise ValueError("OpenRouter API key not found. Please make sure OPENROUTER_API_KEY is set in your .env file.")
+        return ChatOpenAI(
+            model=model_name or os.getenv("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL),
+            api_key=api_key,
+            base_url=OPENROUTER_BASE_URL,
+            default_headers={"X-Title": "FinMod"},
+        )
     else:
         raise ValueError(f"Unsupported model provider: {model_provider}")

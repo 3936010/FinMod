@@ -23,6 +23,12 @@ class NewsAnalyzer:
         elif provider == "Gemini":
             self.model_name = "gemini-2.5-flash"
             self.model_provider = "Gemini"
+        elif provider == "OpenRouter":
+            from utils.llm.llm_models import OPENROUTER_DEFAULT_MODEL
+            self.model_name = os.getenv("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
+            self.model_provider = "OpenRouter"
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
         self.max_retries = 3
         # None sentinel avoids the mutable-default pitfall where date is evaluated
         # once at class definition time and grows stale in long-running processes.
