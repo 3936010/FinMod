@@ -14,7 +14,7 @@
 | D4 | **Technical analysis = 7 indicators, one per market dimension.** No overlapping indicators. |
 | D5 | **Agreement is an input, not a gate.** Disagreement lowers the probability; it doesn't force "hold". Actions are graded, and there are only 2–3 named hard vetoes. |
 | D6 | **Measure before improving.** Every change is judged with the same walk-forward harness, against fixed baselines, after costs. The go/no-go bar is set before results are seen. |
-| D7 | **Learn from real moves and from our own mistakes.** Backtests produce a move study (how indicators behave in real up/down moves) and a signal journal (every right and wrong call, with its full context). |
+| D7 | **Learn from real moves and from our own mistakes.** Backtests produce a confluence study (which indicator combinations line up with real up/down moves) and a signal journal (every right and wrong call, with its full context). |
 | D8 | **Target device: original Jetson Nano 4 GB.** Python 3.12 Docker on CPU, no local LLM (OpenRouter instead), training on the PC, inference only on the Nano. |
 
 Realistic goal: a **small but stable positive expected value after costs**, trading often enough to matter, and staying out when there's no edge. For large-cap 3–10 day direction, professional hit rates are ~51–56%.
@@ -85,29 +85,54 @@ Left out because they overlap one of the seven: MACD (trend + momentum), Stochas
 
 ### B1 — Implement the 7 indicators + state labels
 - [ ] `features/technical.py`, pure pandas (Nano-friendly), unit-tested: the 7 indicators, all normalised (ATR units / percentiles / ratios; nothing that reveals a ticker by its price level).
-- [ ] `market_state()` → the 7 labels with documented cut-offs, e.g. ADX > 25 = strong, ATR percentile > 80 = high volatility. Cut-offs are checked against the move study (B2), not just taken from textbooks.
+- [ ] `market_state()` → the 7 labels with documented cut-offs, e.g. ADX > 25 = strong, ATR percentile > 80 = high volatility. Cut-offs are checked against the confluence study (B2), not just taken from textbooks.
 - [ ] One-off check: MACD vs the EMA alignment and Bollinger vs the ATR percentile. A challenger only replaces the incumbent if it wins in the harness.
 
-### B2 — Move study: how indicators behave in *real* moves
-**Goal:** learn what the 7 indicators look like before, during and at the end of real up and down moves, ignoring small day-to-day changes.
+### B2 — Confluence study: which indicator *combinations* line up with real moves
+**Goal:** find combinations of our 7 indicators that fire together when a real move starts, and check whether a combination is a **stronger signal than each indicator alone**. The classic example is a moving-average crossover (short MA crosses above the long MA → buy, below → sell). It becomes much more interesting when, say, the crossover happens **while** ADX is rising and volume is confirming.
 
-- [ ] **Define a real move** with a ZigZag / swing detector in ATR units: a swing counts when price travels **≥ k×ATR** (start k = 3) from a swing low to a swing high (up move) or the reverse (down move), over ≥ 3 days. Everything smaller is "chop". Thresholds are in ATR so they adapt to each stock's volatility.
-- [ ] **Event table** (`results/moves/moves.parquet`): ticker, direction, start/end date, size in ATR and %, duration, max drawdown inside the move.
-- [ ] **Indicator profiles around each move:** the 7 indicators and state labels at days −10 … +10 around the move **start**, at the move's **midpoint**, and around its **end**. Compare against the same values on ordinary days (the baseline).
-- [ ] **Control group: false starts.** Moves that began the same way but reversed before reaching k×ATR. At decision time you can't know which kind you are in, so the useful question is: *which indicator states separate real starts from false starts?* Without this control the study is hindsight.
-- [ ] Questions to answer, per direction and per regime:
-  - Which states are common at the start of real up moves and rare at false starts?
-  - Which states typically mark the **end** (exhaustion, e.g. RSI stretched + volume fading)?
-  - Do down moves look like mirrored up moves? (Often not: down moves tend to be faster and more volatile.)
-  - How early do the signals appear, i.e. how many days and ATR of the move are already gone when the state flips?
-- [ ] Output: a short report (`results/moves/report.md` + charts) and a list of **candidate features** (e.g. "ADX rising from < 20", "volume confirming on the breakout day"). They go into the model only if B3 shows they help.
+1. **Define a real move** with a swing detector in ATR units: price travels **≥ k×ATR** (start k = 3) from a swing low to a swing high (up move) or the reverse (down move), over ≥ 3 days. Smaller wiggles are "chop" and ignored. ATR units adapt to each stock's volatility.
+   - [ ] Event table `results/moves/moves.parquet`: ticker, direction, start/end, size (ATR, %), duration.
+
+2. **Signal events from the 7 indicators.** A short, fixed list of simple yes/no events (no fine-tuning of parameters):
+
+   | Indicator | Bullish event | Bearish event |
+   |---|---|---|
+   | 200-day MA | price crosses above | price crosses below |
+   | EMA crossover | short crosses above long (test 10/20 and 20/50) | short crosses below long |
+   | ADX | rises above 25 (trend starting) | (same, direction comes from the others) |
+   | RSI | crosses above 50 / leaves oversold (< 30) | crosses below 50 / leaves overbought (> 70) |
+   | ATR percentile | volatility expands after a quiet period (squeeze release) | (same) |
+   | Volume | volume > 1.5× 20-day average on an up day | volume > 1.5× average on a down day |
+   | Relative strength | turns positive vs SPY | turns negative vs SPY |
+
+   - [ ] `features/events.py`: these events, unit-tested.
+
+3. **Coincidence = events within a short window of each other** (e.g. within 3 trading days), because indicators rarely fire on the exact same day. Example combo: "EMA 20/50 bullish cross + volume confirm + ADX > 25, all within 3 days".
+
+4. **Score every single event, pair and triple** (no more than three, which keeps it readable and limits false discoveries). For each, over all occurrences:
+   - **Hit rate:** how often a real move in the same direction followed within N days.
+   - **Lift:** that hit rate ÷ the base rate (how often a real move follows on any random day). A lift of 1.0 means no better than random.
+   - **Gain over its parts:** does the combo beat each of its member events alone? If not, it adds nothing.
+   - **Average outcome** in R after costs, and how many days/ATR of the move were already gone when the combo fired (late signals are worth little).
+   - **Count:** combos that fire fewer than ~30 times are ignored, because they're too rare to trust.
+
+5. **Guard against lucky combos.** There are hundreds of pairs and triples, so some will look great by chance.
+   - [ ] Discover on the **older half** of the data, then confirm on the **newer half**. Only combos that hold up in both are kept.
+   - [ ] They must work across many tickers, not just one.
+   - [ ] Report results by regime (bull/bear, high/low volatility), because a combo may only work in one.
+
+6. **Output**
+   - [ ] `results/confluence/report.md`: the top confirmed combos for up moves and for down moves, with hit rate, lift, count and timing, plus combos that looked good on the older half but failed on the newer half (so we don't retry them).
+   - [ ] The confirmed combos become **yes/no features** for the decision model (`combo_ema_cross_vol_adx`, …) and readable reasons for the bot ("EMA cross + volume + strong trend").
+   - The decision model can learn interactions by itself, but explicit combos are easy to read and help when data is limited. B3 checks that they add value.
 
 ### B3 — Measure what each indicator is worth
 - [ ] Ablation: drop one indicator at a time on walk-forward folds.
 - [ ] Permutation importance and SHAP on **test folds only**.
 - [ ] Stability check: an indicator that only helps in one year is noise.
 
-**Done when:** the 7-indicator set is documented, tested, beats the old 23 features in the harness, and the move study report exists.
+**Done when:** the 7-indicator set is documented, tested, beats the old 23 features in the harness, and the confluence report exists.
 
 ## Phase C — Multi-stock training dataset
 
@@ -117,7 +142,7 @@ Left out because they overlap one of the seven: MACD (trend + momentum), Stochas
 - [ ] Daily OHLCV cached to Parquet in `data/` (gitignored), incremental updates.
 - [ ] Polygon news `insights` per ticker/day from 2024-07-02 (16:00 ET cutoff, already in `feature_builder.py`).
 - [ ] Point-in-time earnings dates.
-- [ ] `build_dataset.py`: one row per (ticker, day): Layer 2 indicators + states, news aggregates, events, GRU output (out-of-fold), triple-barrier labels, and the B2 move tag (which move / phase of move the day sits in, **for analysis only, never a feature**, because it uses the future).
+- [ ] `build_dataset.py`: one row per (ticker, day): Layer 2 indicators + states, news aggregates, events, GRU output (out-of-fold), triple-barrier labels, and the move tag from B2 (which real move / phase of move the day sits in, **for analysis only, never a feature**, because it uses the future).
 
 **Done when:** the dataset builds reproducibly with one command; row counts, date coverage and label balance are reported.
 
@@ -136,12 +161,12 @@ Left out because they overlap one of the seven: MACD (trend + momentum), Stochas
 
 **Goal:** know *when* the system is right and wrong, so the next experiment targets a real weakness instead of a guess.
 
-- [ ] **Journal row per signal** (`results/journal/<run_id>.parquet`): date, ticker, each layer's output (news label + p, 7 state labels, GRU direction), decision p, action, size, hold reason, outcome (barrier hit, R, days held), right/wrong, and the B2 move context: inside a real up/down move or chop, and how far into it (early / middle / late).
+- [ ] **Journal row per signal** (`results/journal/<run_id>.parquet`): date, ticker, each layer's output (news label + p, 7 state labels, GRU direction), decision p, action, size, hold reason, outcome (barrier hit, R, days held), right/wrong, and the move context (from the B2 swing detector): inside a real up/down move or chop, and how far into it (early / middle / late).
 - [ ] Standard error report per run:
   - Hit rate and EV **by market state** (e.g. "bull + strong trend" vs "bear + high volatility").
   - Hit rate **by layer agreement pattern** (all agree / news disagrees / GRU disagrees, …).
   - **Timing:** share of trades entered early / mid / late in a move. Late entries are usually where losses come from.
-  - **Missed moves:** real moves (from B2) where we held, broken down by hold reason. This is the direct check on the "always hold" problem.
+  - **Missed moves:** real moves (from the B2 swing detector) where we held, broken down by hold reason. This is the direct check on the "always hold" problem.
   - **Worst 20 losses and best 20 wins**, with full context, for manual review.
 - [ ] **Experiment log** (`EXPERIMENTS.md`): one row per experiment: hypothesis (from the journal), change, run id, result, keep / drop. Experiments must come from journal findings, e.g. "losses cluster in high-volatility chop → test a volatility veto".
 
@@ -185,7 +210,7 @@ Left out because they overlap one of the seven: MACD (trend + momentum), Stochas
 ## Order of work
 
 ```
-A (harness) ──► B1 (7 indicators) ──► B2 (move study) ──► B3 ──► C (dataset) ──► D (decision model) ──► F ──► G ──► H
+A (harness) ──► B1 (7 indicators) ──► B2 (confluence study) ──► B3 ──► C (dataset) ──► D (decision model) ──► F ──► G ──► H
      └──────────── J (journal) is built with A and reused by every later backtest ────────────┘
 E (news + daily logger) runs in parallel from the start
 ```
@@ -196,4 +221,4 @@ E (news + daily logger) runs in parallel from the start
 |---|---|---|
 | 2026-11-21 | Research | RESEARCH.md |
 | 2026-11-21 | Step 1 | DecisionInput v1, feature builder, daily logger, OpenRouter |
-| 2026-11-22 | Plan | This file: layers, 7 indicators, graded actions, move study, signal journal |
+| 2026-11-22 | Plan | This file: layers, 7 indicators, graded actions, confluence study, signal journal |
