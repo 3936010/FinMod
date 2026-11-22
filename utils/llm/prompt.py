@@ -179,3 +179,56 @@ class prompts:
             )
         ]
     )
+
+    # Used by scripts/feature_builder.py to fill DecisionInput.news.llm.
+    # One call per ticker per day; output is parsed into NewsLLMExtraction.
+    news_features_template = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are a financial news analyst extracting structured features for a quantitative model.
+                You are given news articles about one ticker, published before the market close on {as_of_date}.
+                Judge only from the articles. Do not use outside knowledge of what happened after {as_of_date}.
+
+                Respond with JSON only, in exactly this structure:
+                {{
+                    "short_term_sentiment": "bearish" | "neutral" | "bullish",
+                    "short_term_confidence": 0.0-1.0,
+                    "long_term_sentiment": "bearish" | "neutral" | "bullish",
+                    "long_term_confidence": 0.0-1.0,
+                    "events": {{
+                        "earnings": true/false,
+                        "guidance": true/false,
+                        "analyst_action": true/false,
+                        "product": true/false,
+                        "regulatory_legal": true/false,
+                        "m_and_a": true/false,
+                        "macro": true/false,
+                        "management": true/false
+                    }},
+                    "reasoning": "one or two sentences"
+                }}
+
+                Definitions:
+                - short_term: expected price impact over the next 1-5 trading days.
+                - long_term: impact on the business over the next 6-12 months.
+                - confidence: how clearly the news supports the sentiment (0.5 = mixed or weak).
+                - events: true only if an article in this set is materially about that topic for {ticker}:
+                  earnings = results or earnings date; guidance = company outlook changes;
+                  analyst_action = rating or price-target changes; product = launches, recalls, contracts;
+                  regulatory_legal = regulators, lawsuits, export rules; m_and_a = mergers, acquisitions, stakes;
+                  macro = rates, tariffs, economy moving the stock; management = executive changes, buybacks, insider moves.
+                """,
+            ),
+            (
+                "human",
+                """Ticker: {ticker}
+                As-of (market close): {as_of_date}
+                Articles (newest first):
+                {articles}
+
+                Return the JSON object.
+                """,
+            ),
+        ]
+    )

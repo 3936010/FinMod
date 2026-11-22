@@ -94,8 +94,16 @@ class MarketAgent:
         self.ticker = ticker
         self.stock_predictor = StockPredictor(ticker)
         self.alpha_predictor = AlphaPredictor(PROJECT_ROOT / "models" / "alpha_gru_v1")
-        self.model_name = "gpt-oss:20b"
-        self.model_provider = "Ollama"
+        # LLM_PROVIDER=OpenRouter in .env for devices that can't run a local model
+        # (e.g. Jetson Nano). Default stays local Ollama.
+        self.model_provider = os.getenv("LLM_PROVIDER", "Ollama")
+        if self.model_provider == "OpenRouter":
+            from utils.llm.llm_models import OPENROUTER_DEFAULT_MODEL
+            self.model_name = os.getenv("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
+        elif self.model_provider == "Gemini":
+            self.model_name = "gemini-2.5-flash"
+        else:
+            self.model_name = "gpt-oss:20b"
         self.max_retries = 3
         self.news_analyzer = NewsAnalyzer(ticker, provider=self.model_provider)
 

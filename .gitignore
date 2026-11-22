@@ -230,3 +230,5 @@ local_data.db
 *.pt
 /models
 .codex
+# Decision-model dataset (generated daily)
+/data
